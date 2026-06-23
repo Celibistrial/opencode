@@ -40,6 +40,7 @@ export class GenerationError extends Schema.TaggedErrorClass<GenerationError>()(
 
 export type Endpoint = {
   readonly group: string
+  readonly sourceGroup: string
   readonly topLevel: boolean
   readonly endpoint: HttpApiEndpoint.AnyWithProps
   readonly params: Schema.Top | undefined
@@ -56,6 +57,7 @@ export type Endpoint = {
 
 export type Group = {
   readonly identifier: string
+  readonly sourceIdentifier: string
   readonly module: string
   readonly endpoints: ReadonlyArray<Endpoint>
 }
@@ -72,6 +74,7 @@ const manifestName = ".httpapi-codegen.json"
 
 export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
   api: HttpApi.HttpApi<Id, Groups>,
+  options?: { readonly groupNames?: Readonly<Record<string, string>> },
 ): Contract {
   const endpoints: Array<Endpoint> = []
   const portable = new Map<SchemaAST.AST, boolean>()
@@ -79,7 +82,8 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
   HttpApi.reflect(api, {
     onGroup() {},
     onEndpoint({ endpoint, errors, group, middleware }) {
-      const name = `${group.identifier}.${endpoint.name}`
+      const groupName = options?.groupNames?.[group.identifier] ?? group.identifier
+      const name = `${groupName}.${endpoint.name}`
       const required = Array.from(middleware).find((item) => item.requiredForClient)
       if (required !== undefined) {
         throw new GenerationError({ reason: `Client middleware requires adapter: ${required.key}` })
@@ -129,7 +133,8 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
       }
 
       endpoints.push({
-        group: group.identifier,
+        group: groupName,
+        sourceGroup: group.identifier,
         topLevel: group.topLevel,
         endpoint,
         params: params?.schema,
@@ -142,7 +147,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
         errors: errorSchemas.map((item) => item.schema),
         effectPortable,
         operation: {
-          group: group.identifier,
+          group: groupName,
           name: clientEndpointName(endpoint.name),
           input: inputs.map(({ name, source }) => ({ name, source })),
           inputMode: inputs.length === 0 ? "none" : inputs.every((field) => field.optional) ? "optional" : "required",
@@ -169,10 +174,13 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
   const groups = Array.from(
     Map.groupBy(endpoints, (endpoint) => endpoint.group),
     ([identifier, endpoints], index) => {
+      if (new Set(endpoints.map((endpoint) => endpoint.sourceGroup)).size > 1) {
+        throw new GenerationError({ reason: `Client group name collision: ${identifier}` })
+      }
       const base = /^[A-Za-z0-9_-]+$/.test(identifier) ? identifier : `group-${index}`
       const module = uniqueModule(base, index, modules)
       modules.add(module.toLowerCase())
-      return { identifier, module, endpoints }
+      return { identifier, sourceIdentifier: endpoints[0].sourceGroup, module, endpoints }
     },
   )
   const publicNames = new Set<string>()
@@ -211,6 +219,7 @@ export function emitEffectImported(
   contract: Contract,
   options:
     | { readonly module: string; readonly api: string }
+    | { readonly module: string; readonly group: string }
     | { readonly module: string; readonly endpoints: Readonly<Record<string, string>> },
 ): Output {
   return {
@@ -304,10 +313,11 @@ function renderImportedEffectFiles(
   groups: ReadonlyArray<Group>,
   options:
     | { readonly module: string; readonly api: string }
+    | { readonly module: string; readonly group: string }
     | { readonly module: string; readonly endpoints: Readonly<Record<string, string>> },
 ): Output["files"] {
   const adapters = groups.map((group, groupIndex) => {
-    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${JSON.stringify(group.identifier)}]`
+    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${JSON.stringify(group.sourceIdentifier)}]`
     const methods = group.endpoints.map((item, endpointIndex) => {
       const prefix = `Endpoint${groupIndex}_${endpointIndex}`
       const request = (["params", "query", "headers", "payload"] as const)
@@ -338,16 +348,20 @@ function renderImportedEffectFiles(
   const fields = groups.flatMap((group, index) =>
     group.endpoints[0]?.topLevel
       ? [`...adaptGroup${index}(raw)`]
-      : [`${JSON.stringify(group.identifier)}: adaptGroup${index}(raw[${JSON.stringify(group.identifier)}])`],
+      : [`${JSON.stringify(group.identifier)}: adaptGroup${index}(raw[${JSON.stringify(group.sourceIdentifier)}])`],
   )
   const usesStream = groups.some((group) => group.endpoints.some((item) => item.operation.success === "stream"))
   const imported = "api" in options
-  const projection = imported ? undefined : renderImportedProjection(groups, options.endpoints)
+  const projection = imported
+    ? undefined
+    : "group" in options
+      ? renderImportedGroup(options.group)
+      : renderImportedProjection(groups, options.endpoints)
   const api = imported ? options.api : "Api"
   const imports =
     projection === undefined
       ? `import { ${api} } from ${JSON.stringify(options.module)}`
-      : `import { HttpApi, HttpApiClient, HttpApiGroup } from "effect/unstable/httpapi"\nimport { ${projection.imports.join(", ")} } from ${JSON.stringify(options.module)}`
+      : `import { HttpApi, HttpApiClient${"endpoints" in options ? ", HttpApiGroup" : ""} } from "effect/unstable/httpapi"\nimport { ${projection.imports.join(", ")} } from ${JSON.stringify(options.module)}`
   const httpApiImport = projection === undefined ? 'import { HttpApiClient } from "effect/unstable/httpapi"\n' : ""
   const client = `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect${usesStream ? ", Stream" : ""}, Schema } from "effect"\nimport { Sse } from "effect/unstable/encoding"\nimport { HttpClientError } from "effect/unstable/http"\n${httpApiImport}${imports}\nimport { ClientError } from "./client-error"\n\n${projection?.source ?? ""}type RawClient = HttpApiClient.ForApi<typeof ${api}>\n\nconst mapClientError = <E>(error: E) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : error\n\n${adapters.join("\n\n")}\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) => HttpApiClient.make(${api}, options).pipe(Effect.map((raw) => ({ ${fields.join(", ")} })))\n`
   return [
@@ -362,6 +376,13 @@ function renderImportedEffectFiles(
       content: 'export { ClientError } from "./client-error"\nexport * as OpenCode from "./client"\n',
     },
   ]
+}
+
+function renderImportedGroup(group: string) {
+  return {
+    imports: [group],
+    source: `const Api = HttpApi.make("generated").add(${group})\n\n`,
+  }
 }
 
 function renderImportedProjection(groups: ReadonlyArray<Group>, endpoints: Readonly<Record<string, string>>) {
@@ -444,7 +465,10 @@ function renderPromiseTypes(groups: ReadonlyArray<Group>) {
       }),
     )
     .join("\n\n")
-  return [...errorTypes, operations].filter(Boolean).join("\n\n")
+  const json = operations.includes("JsonValue")
+    ? "export type JsonValue = null | boolean | number | string | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue }"
+    : ""
+  return [json, ...errorTypes, operations].filter(Boolean).join("\n\n")
 }
 
 function renderPromiseClient(groups: ReadonlyArray<Group>) {
@@ -536,7 +560,9 @@ function structuralType(schema: Schema.Top) {
     }
     return type
   }
-  return expand(document.codes[0].Type).replaceAll(/ & Brand\.Brand<"[^"]+">/g, "")
+  return expand(document.codes[0].Type)
+    .replaceAll(/ & Brand\.Brand<"[^"]+">/g, "")
+    .replaceAll("Schema.Json", "JsonValue")
 }
 
 function promisePath(path: string, input: ReadonlyArray<InputField>) {

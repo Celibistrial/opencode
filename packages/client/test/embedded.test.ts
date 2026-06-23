@@ -40,6 +40,7 @@ test("embedded client uses the real router and handlers", async () => {
         prompt: { text: "Do not run" },
         resume: false,
       })
+      const context = yield* opencode.sessions.context({ sessionID })
       const missing = yield* Effect.flip(
         opencode.sessions.get({ sessionID: SessionID.make(`ses_missing_${crypto.randomUUID()}`) }),
       )
@@ -49,6 +50,7 @@ test("embedded client uses the real router and handlers", async () => {
       expect(selected.model?.providerID).toBe(model.providerID)
       expect(page.data.some((session) => session.id === sessionID)).toBe(true)
       expect(admitted.sessionID).toBe(sessionID)
+      expect(context.some((message) => message.type === "model-switched")).toBe(true)
       expect(missing._tag).toBe("SessionNotFoundError")
     })
     await Effect.runPromise(Effect.scoped(program))

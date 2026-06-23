@@ -88,6 +88,48 @@ describe("HttpApiCodegen.generate", () => {
     expect(client).toContain('const Api = HttpApi.make("generated").add(HttpApiGroup.make("session").add(SessionGet))')
   })
 
+  test("imports an authoritative group without reconstructing it", () => {
+    const output = emitEffectImported(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session/:sessionID", {
+            params: { sessionID: Schema.String },
+            success: Schema.String,
+          }),
+        ),
+      ),
+      { module: "@example/api", group: "SessionGroup" },
+    )
+    const client = output.files.find((file) => file.path === "client.ts")?.content
+
+    expect(client).toContain('import { SessionGroup } from "@example/api"')
+    expect(client).toContain('const Api = HttpApi.make("generated").add(SessionGroup)')
+    expect(client).not.toContain("HttpApiGroup")
+  })
+
+  test("separates hosted and consumer group names", () => {
+    const source = HttpApi.make("test").add(
+      HttpApiGroup.make("server.session").add(
+        HttpApiEndpoint.get("session.get", "/session", { success: Schema.String }),
+      ),
+    )
+    const contract = compileContract(source, { groupNames: { "server.session": "sessions" } })
+
+    expect(contract.groups[0]?.identifier).toBe("sessions")
+    expect(contract.groups[0]?.sourceIdentifier).toBe("server.session")
+    expect(contract.groups[0]?.endpoints[0]?.operation).toMatchObject({ group: "sessions", name: "get" })
+  })
+
+  test("rejects consumer group name collisions", () => {
+    const source = HttpApi.make("test")
+      .add(HttpApiGroup.make("first").add(HttpApiEndpoint.get("one", "/one", { success: Schema.String })))
+      .add(HttpApiGroup.make("second").add(HttpApiEndpoint.get("two", "/two", { success: Schema.String })))
+
+    expect(() => compileContract(source, { groupNames: { first: "same", second: "same" } })).toThrow(
+      "Client group name collision: same",
+    )
+  })
+
   test("uses the unqualified endpoint name for the public client", () => {
     const contract = compileContract(
       api(
@@ -156,6 +198,23 @@ describe("HttpApiCodegen.generate", () => {
     expect(output.files.find((file) => file.path === "types.ts")?.content).toContain(
       'export type SessionGetOutput = ({ readonly "data": ({ readonly "value": string }) })["data"]',
     )
+  })
+
+  test("emits Effect Json schemas as standalone Promise types", () => {
+    const output = emitPromise(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session", {
+            success: Schema.Json,
+          }),
+        ),
+      ),
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types).toContain("export type JsonValue =")
+    expect(types).toContain("{ readonly [key: string]: JsonValue }")
+    expect(types).not.toContain("Schema.Json")
   })
 
   test("emits an optional Promise input when every field is optional", () => {

@@ -23,6 +23,9 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
     if (url.includes("/prompt")) {
       return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(admission)))
     }
+    if (url.includes("/context")) {
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ data: [] })))
+    }
     if (request.method === "POST" && url.endsWith("/api/session")) {
       return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(session)))
     }
@@ -47,12 +50,16 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
       prompt: { text: "Hello" },
       resume: false,
     })
-    return { page, created, admitted }
+    yield* client.sessions.compact({ sessionID: SessionID.make("ses_test") })
+    yield* client.sessions.wait({ sessionID: SessionID.make("ses_test") })
+    const context = yield* client.sessions.context({ sessionID: SessionID.make("ses_test") })
+    return { page, created, admitted, context }
   }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.runPromise)
 
   expect(DateTime.toEpochMillis(result.page.data[0].time.created)).toBe(1_717_171_717_000)
   expect(result.created.id).toBe("ses_test")
   expect(DateTime.toEpochMillis(result.admitted.timeCreated)).toBe(1_717_171_717_000)
+  expect(result.context).toEqual([])
 })
 
 const session = {

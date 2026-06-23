@@ -2,7 +2,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
-import { ServiceUnavailableError, SessionNotFoundError, UnknownError } from "../errors"
+import { ServiceUnavailableError, SessionNotFoundError, UnauthorizedError, UnknownError } from "../errors"
 import { SessionLocationMiddleware } from "../middleware/session-location"
 import {
   SessionsCreate,
@@ -27,7 +27,7 @@ export const SessionGroup = HttpApiGroup.make("server.session")
     HttpApiEndpoint.post("session.compact", "/api/session/:sessionID/compact", {
       params: { sessionID: SessionV2.ID },
       success: HttpApiSchema.NoContent,
-      error: [SessionNotFoundError, ServiceUnavailableError],
+      error: [SessionNotFoundError, ServiceUnavailableError, UnauthorizedError],
     })
       .middleware(SessionLocationMiddleware)
       .annotateMerge(
@@ -42,7 +42,7 @@ export const SessionGroup = HttpApiGroup.make("server.session")
     HttpApiEndpoint.post("session.wait", "/api/session/:sessionID/wait", {
       params: { sessionID: SessionV2.ID },
       success: HttpApiSchema.NoContent,
-      error: [SessionNotFoundError, ServiceUnavailableError],
+      error: [SessionNotFoundError, ServiceUnavailableError, UnauthorizedError],
     })
       .middleware(SessionLocationMiddleware)
       .annotateMerge(
@@ -57,7 +57,7 @@ export const SessionGroup = HttpApiGroup.make("server.session")
     HttpApiEndpoint.get("session.context", "/api/session/:sessionID/context", {
       params: { sessionID: SessionV2.ID },
       success: Schema.Struct({ data: Schema.Array(SessionMessage.Message) }),
-      error: [SessionNotFoundError, UnknownError],
+      error: [SessionNotFoundError, UnauthorizedError, UnknownError],
     })
       .middleware(SessionLocationMiddleware)
       .annotateMerge(

@@ -11,6 +11,12 @@ import type {
   SessionsSwitchModelOutput,
   SessionsPromptInput,
   SessionsPromptOutput,
+  SessionsCompactInput,
+  SessionsCompactOutput,
+  SessionsWaitInput,
+  SessionsWaitOutput,
+  SessionsContextInput,
+  SessionsContextOutput,
 } from "./types"
 import { ClientError } from "./client-error"
 
@@ -223,6 +229,39 @@ export function make(options: ClientOptions) {
             body: { id: input.id, prompt: input.prompt, delivery: input.delivery, resume: input.resume },
             successStatus: 200,
             declaredStatuses: [409, 400, 404, 401],
+            empty: false,
+          },
+          requestOptions,
+        ).then((value) => value.data),
+      compact: (input: SessionsCompactInput, requestOptions?: RequestOptions) =>
+        request<SessionsCompactOutput>(
+          {
+            method: "POST",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/compact`,
+            successStatus: 204,
+            declaredStatuses: [404, 503, 401, 400],
+            empty: true,
+          },
+          requestOptions,
+        ),
+      wait: (input: SessionsWaitInput, requestOptions?: RequestOptions) =>
+        request<SessionsWaitOutput>(
+          {
+            method: "POST",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/wait`,
+            successStatus: 204,
+            declaredStatuses: [404, 503, 401, 400],
+            empty: true,
+          },
+          requestOptions,
+        ),
+      context: (input: SessionsContextInput, requestOptions?: RequestOptions) =>
+        request<{ readonly data: SessionsContextOutput }>(
+          {
+            method: "GET",
+            path: `/api/session/${encodeURIComponent(input.sessionID)}/context`,
+            successStatus: 200,
+            declaredStatuses: [404, 401, 500, 400],
             empty: false,
           },
           requestOptions,

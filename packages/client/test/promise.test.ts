@@ -25,6 +25,7 @@ test("session methods use the public HTTP contract", async () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
       requests.push({ url, init })
       if (url.includes("/prompt")) return Response.json(admission)
+      if (url.includes("/context")) return Response.json({ data: [] })
       if (init?.method === "POST" && url.endsWith("/api/session")) return Response.json(session)
       if (init?.method === "POST") return new Response(null, { status: 204 })
       return Response.json({ data: [session.data], cursor: { next: "next" } })
@@ -43,18 +44,25 @@ test("session methods use the public HTTP contract", async () => {
     prompt: { text: "Hello" },
     resume: false,
   })
+  await client.sessions.compact({ sessionID: "ses_test" })
+  await client.sessions.wait({ sessionID: "ses_test" })
+  const context = await client.sessions.context({ sessionID: "ses_test" })
 
   expect(page.cursor.next).toBe("next")
   expect(created.id).toBe("ses_test")
   expect(admitted.id).toBe("msg_test")
+  expect(context).toEqual([])
   expect(requests.map((request) => [request.init?.method, request.url])).toEqual([
     ["GET", "http://localhost:3000/api/session?limit=10&order=desc"],
     ["POST", "http://localhost:3000/api/session"],
     ["POST", "http://localhost:3000/api/session/ses_test/agent"],
     ["POST", "http://localhost:3000/api/session/ses_test/model"],
     ["POST", "http://localhost:3000/api/session/ses_test/prompt"],
+    ["POST", "http://localhost:3000/api/session/ses_test/compact"],
+    ["POST", "http://localhost:3000/api/session/ses_test/wait"],
+    ["GET", "http://localhost:3000/api/session/ses_test/context"],
   ])
-  const body = requests.at(-1)?.init?.body
+  const body = requests[4]?.init?.body
   if (typeof body !== "string") throw new Error("Expected JSON request body")
   expect(JSON.parse(body)).toEqual({
     prompt: { text: "Hello" },
