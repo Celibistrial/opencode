@@ -12,7 +12,6 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/api": "workspace:*",
     "@opencode-ai/core": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"

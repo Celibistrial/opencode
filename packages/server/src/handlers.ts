@@ -8,7 +8,7 @@ import { sessionLocationLayer } from "./middleware/session-location"
 import { MessageHandler } from "./handlers/message"
 import { ModelHandler } from "./handlers/model"
 import { ProviderHandler } from "./handlers/provider"
-import { SessionHandler } from "./handlers/session"
+import { SessionsHandler } from "./handlers/session"
 import { PermissionHandler } from "./handlers/permission"
 import { FileSystemHandler } from "./handlers/fs"
 import { CommandHandler } from "./handlers/command"
@@ -25,14 +25,12 @@ import { IntegrationHandler } from "./handlers/integration"
 import { CredentialHandler } from "./handlers/credential"
 import { Credential } from "@opencode-ai/core/credential"
 import { ProjectCopyHandler } from "./handlers/project-copy"
-import { PublicSessionHandler } from "./handlers/public-session"
 
 export const handlers = Layer.mergeAll(
   HealthHandler,
   LocationHandler,
   AgentHandler,
-  PublicSessionHandler,
-  SessionHandler,
+  SessionsHandler,
   MessageHandler,
   ModelHandler,
   ProviderHandler,

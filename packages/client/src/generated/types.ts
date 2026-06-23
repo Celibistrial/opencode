@@ -113,7 +113,7 @@ export type SessionsListInput = {
 export type SessionsListOutput = {
   readonly data: ReadonlyArray<{
     readonly id: string
-    readonly parentID?: string
+    readonly parentID?: string | null
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
@@ -124,7 +124,11 @@ export type SessionsListOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
+    readonly time: {
+      readonly created: number | "Infinity" | "-Infinity" | "NaN"
+      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
+      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
+    }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -170,7 +174,7 @@ export type SessionsCreateInput = {
 export type SessionsCreateOutput = {
   readonly data: {
     readonly id: string
-    readonly parentID?: string
+    readonly parentID?: string | null
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
@@ -181,7 +185,11 @@ export type SessionsCreateOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
+    readonly time: {
+      readonly created: number | "Infinity" | "-Infinity" | "NaN"
+      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
+      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
+    }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -193,7 +201,7 @@ export type SessionsGetInput = { readonly sessionID: { readonly sessionID: strin
 export type SessionsGetOutput = {
   readonly data: {
     readonly id: string
-    readonly parentID?: string
+    readonly parentID?: string | null
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
@@ -204,7 +212,11 @@ export type SessionsGetOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
+    readonly time: {
+      readonly created: number | "Infinity" | "-Infinity" | "NaN"
+      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
+      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
+    }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -343,7 +355,7 @@ export type SessionsPromptOutput = {
       }> | null
     }
     readonly delivery: "steer" | "queue"
-    readonly timeCreated: number
+    readonly timeCreated: number | "Infinity" | "-Infinity" | "NaN"
     readonly promotedSeq?: number | null
   }
 }["data"]

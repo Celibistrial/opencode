@@ -1,45 +1,22 @@
-import { DateTime, Option, Schema, SchemaGetter } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { Schema } from "effect"
+import { HttpApiEndpoint, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { ConflictError, InvalidCursorError, InvalidRequestError, SessionNotFoundError } from "../errors"
 
 export const SessionID = Schema.String.check(Schema.isStartsWith("ses")).pipe(Schema.brand("SessionID"))
-export type SessionID = typeof SessionID.Type
-
-const ProjectID = Schema.String.pipe(Schema.brand("Project.ID"))
 export const AgentID = Schema.String.pipe(Schema.brand("AgentV2.ID"))
-const ModelID = Schema.String.pipe(Schema.brand("ModelV2.ID"))
-const ProviderID = Schema.String.pipe(Schema.brand("ProviderV2.ID"))
-const VariantID = Schema.String.pipe(Schema.brand("VariantID"))
-export const AbsolutePath = Schema.String.pipe(Schema.brand("AbsolutePath"))
-const RelativePath = Schema.String.pipe(Schema.brand("RelativePath"))
-const WorkspaceID = Schema.String.check(Schema.isStartsWith("wrk")).pipe(Schema.brand("WorkspaceV2.ID"))
-export const MessageID = Schema.String.check(Schema.isStartsWith("msg_")).pipe(Schema.brand("Session.Message.ID"))
 export const ModelRef = Schema.Struct({
-  id: ModelID,
-  providerID: ProviderID,
-  variant: VariantID.pipe(Schema.optional),
+  id: Schema.String.pipe(Schema.brand("ModelV2.ID")),
+  providerID: Schema.String.pipe(Schema.brand("ProviderV2.ID")),
+  variant: Schema.String.pipe(Schema.brand("VariantID"), Schema.optional),
 })
 export const LocationRef = Schema.Struct({
-  directory: AbsolutePath,
-  workspaceID: WorkspaceID.pipe(Schema.optional),
+  directory: Schema.String.pipe(Schema.brand("AbsolutePath")),
+  workspaceID: Schema.String.check(Schema.isStartsWith("wrk")).pipe(Schema.brand("WorkspaceV2.ID"), Schema.optional),
 })
-const DateTimeUtcFromMillis = Schema.Finite.pipe(
-  Schema.decodeTo(Schema.DateTimeUtc, {
-    decode: SchemaGetter.transform((value) => DateTime.makeUnsafe(value)),
-    encode: SchemaGetter.transform((value) => DateTime.toEpochMillis(value)),
-  }),
-)
-const optionalOmitUndefined = <S extends Schema.Top>(schema: S) =>
-  Schema.optionalKey(schema).pipe(
-    Schema.decodeTo(Schema.optional(schema), {
-      decode: SchemaGetter.passthrough({ strict: false }),
-      encode: SchemaGetter.transformOptional(Option.filter((value) => value !== undefined)),
-    }),
-  )
-
 export const Session = Schema.Struct({
   id: SessionID,
-  parentID: optionalOmitUndefined(SessionID),
-  projectID: ProjectID,
+  parentID: SessionID.pipe(Schema.optional),
+  projectID: Schema.String.pipe(Schema.brand("Project.ID")),
   agent: AgentID.pipe(Schema.optional),
   model: ModelRef.pipe(Schema.optional),
   cost: Schema.Finite,
@@ -53,16 +30,14 @@ export const Session = Schema.Struct({
     }),
   }),
   time: Schema.Struct({
-    created: DateTimeUtcFromMillis,
-    updated: DateTimeUtcFromMillis,
-    archived: DateTimeUtcFromMillis.pipe(Schema.optional),
+    created: Schema.DateTimeUtcFromMillis,
+    updated: Schema.DateTimeUtcFromMillis,
+    archived: Schema.DateTimeUtcFromMillis.pipe(Schema.optional),
   }),
   title: Schema.String,
   location: LocationRef,
-  subpath: RelativePath.pipe(Schema.optional),
+  subpath: Schema.String.pipe(Schema.brand("RelativePath"), Schema.optional),
 })
-export type Session = typeof Session.Type
-
 export const Prompt = Schema.Struct({
   text: Schema.String,
   files: Schema.Array(
@@ -89,65 +64,34 @@ export const Prompt = Schema.Struct({
     }),
   ).pipe(Schema.optional),
 })
-
+export const MessageID = Schema.String.check(Schema.isStartsWith("msg_")).pipe(Schema.brand("Session.Message.ID"))
 export const Delivery = Schema.Literals(["steer", "queue"])
-
 export const Admission = Schema.Struct({
   admittedSeq: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   id: MessageID,
   sessionID: SessionID,
   prompt: Prompt,
   delivery: Delivery,
-  timeCreated: DateTimeUtcFromMillis,
+  timeCreated: Schema.DateTimeUtcFromMillis,
   promotedSeq: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.optional),
 })
 
 export const SessionsCursor = Schema.String.pipe(Schema.brand("SessionsCursor"))
-
 export const SessionsQuery = Schema.Struct({
-  workspace: WorkspaceID.pipe(Schema.optional),
-  limit: Schema.NumberFromString.pipe(Schema.decodeTo(Schema.Int.check(Schema.isGreaterThan(0))), Schema.optional),
-  order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
+  workspace: Schema.String.check(Schema.isStartsWith("wrk")).pipe(Schema.brand("WorkspaceV2.ID"), Schema.optional),
+  limit: Schema.NumberFromString.pipe(
+    Schema.decodeTo(Schema.Int.check(Schema.isGreaterThan(0))),
+    Schema.optional,
+  ).annotate({ description: "Maximum number of sessions to return. Defaults to the newest 50 sessions." }),
+  order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional).annotate({
+    description: "Session order for the first page. Use desc for newest first or asc for oldest first.",
+  }),
   search: Schema.String.pipe(Schema.optional),
-  directory: AbsolutePath.pipe(Schema.optional),
-  project: ProjectID.pipe(Schema.optional),
-  subpath: RelativePath.pipe(Schema.optional),
+  directory: Schema.String.pipe(Schema.brand("AbsolutePath"), Schema.optional),
+  project: Schema.String.pipe(Schema.brand("Project.ID"), Schema.optional),
+  subpath: Schema.String.pipe(Schema.brand("RelativePath"), Schema.optional),
   cursor: SessionsCursor.pipe(Schema.optional),
 })
-
-export class SessionNotFoundError extends Schema.TaggedErrorClass<SessionNotFoundError>()(
-  "SessionNotFoundError",
-  {
-    sessionID: Schema.String,
-    message: Schema.String,
-  },
-  { httpApiStatus: 404 },
-) {}
-
-export class InvalidCursorError extends Schema.TaggedErrorClass<InvalidCursorError>()(
-  "InvalidCursorError",
-  { message: Schema.String },
-  { httpApiStatus: 400 },
-) {}
-
-export class InvalidRequestError extends Schema.TaggedErrorClass<InvalidRequestError>()(
-  "InvalidRequestError",
-  {
-    message: Schema.String,
-    kind: Schema.String.pipe(Schema.optional),
-    field: Schema.String.pipe(Schema.optional),
-  },
-  { httpApiStatus: 400 },
-) {}
-
-export class ConflictError extends Schema.TaggedErrorClass<ConflictError>()(
-  "ConflictError",
-  {
-    message: Schema.String,
-    resource: Schema.String.pipe(Schema.optional),
-  },
-  { httpApiStatus: 409 },
-) {}
 
 export const SessionsList = HttpApiEndpoint.get("list", "/api/session", {
   query: SessionsQuery,
@@ -161,7 +105,7 @@ export const SessionsList = HttpApiEndpoint.get("list", "/api/session", {
   error: [InvalidCursorError, InvalidRequestError],
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.list",
+    identifier: "v2.session.list",
     summary: "List sessions",
     description: "Retrieve an ordered page of sessions.",
   }),
@@ -177,7 +121,7 @@ export const SessionsCreate = HttpApiEndpoint.post("create", "/api/session", {
   success: Schema.Struct({ data: Session }),
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.create",
+    identifier: "v2.session.create",
     summary: "Create session",
     description: "Create a session at the requested location.",
   }),
@@ -189,7 +133,7 @@ export const SessionsGet = HttpApiEndpoint.get("get", "/api/session/:sessionID",
   error: SessionNotFoundError,
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.get",
+    identifier: "v2.session.get",
     summary: "Get session",
     description: "Retrieve a session by ID.",
   }),
@@ -202,7 +146,7 @@ export const SessionsSwitchAgent = HttpApiEndpoint.post("switchAgent", "/api/ses
   error: SessionNotFoundError,
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.switchAgent",
+    identifier: "v2.session.switchAgent",
     summary: "Switch session agent",
     description: "Switch the agent used by subsequent session activity.",
   }),
@@ -215,7 +159,7 @@ export const SessionsSwitchModel = HttpApiEndpoint.post("switchModel", "/api/ses
   error: SessionNotFoundError,
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.switchModel",
+    identifier: "v2.session.switchModel",
     summary: "Switch session model",
     description: "Switch the model used by subsequent session activity.",
   }),
@@ -233,24 +177,8 @@ export const SessionsPrompt = HttpApiEndpoint.post("prompt", "/api/session/:sess
   error: [ConflictError, SessionNotFoundError],
 }).annotateMerge(
   OpenApi.annotations({
-    identifier: "sessions.prompt",
+    identifier: "v2.session.prompt",
     summary: "Send prompt",
     description: "Durably admit one session input and schedule execution unless resume is false.",
   }),
 )
-
-export const SessionsGroup = HttpApiGroup.make("sessions")
-  .add(SessionsList)
-  .add(SessionsCreate)
-  .add(SessionsGet)
-  .add(SessionsSwitchAgent)
-  .add(SessionsSwitchModel)
-  .add(SessionsPrompt)
-  .annotateMerge(
-    OpenApi.annotations({
-      title: "sessions",
-      description: "OpenCode sessions.",
-    }),
-  )
-
-export const Api = HttpApi.make("opencode").add(SessionsGroup)

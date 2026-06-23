@@ -70,6 +70,24 @@ describe("HttpApiCodegen.generate", () => {
     )
   })
 
+  test("projects imported endpoint constants into a generated API", () => {
+    const output = emitEffectImported(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session/:sessionID", {
+            params: { sessionID: Schema.String },
+            success: Schema.Struct({ data: Schema.String }),
+          }),
+        ),
+      ),
+      { module: "@example/api", endpoints: { "session.get": "SessionGet" } },
+    )
+    const client = output.files.find((file) => file.path === "client.ts")?.content
+
+    expect(client).toContain('import { SessionGet } from "@example/api"')
+    expect(client).toContain('const Api = HttpApi.make("generated").add(HttpApiGroup.make("session").add(SessionGet))')
+  })
+
   test("erases brands from Promise wire types", () => {
     const output = emitPromise(
       compileContract(

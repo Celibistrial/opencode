@@ -16,6 +16,7 @@ type OpenApiResponse = {
   readonly content?: Record<string, { readonly schema?: OpenApiSchema }>
 }
 type OpenApiOperation = {
+  readonly operationId?: string
   readonly parameters?: ReadonlyArray<{
     readonly name: string
     readonly in: string
@@ -68,6 +69,15 @@ function isBuiltInEndpointError(name: string) {
 }
 
 describe("PublicApi OpenAPI v2 errors", () => {
+  test("keeps current and v2 session groups distinct", () => {
+    const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
+
+    expect(spec.paths["/session"]?.get?.operationId).toBe("session.list")
+    expect(spec.paths["/session/{sessionID}"]?.get?.operationId).toBe("session.get")
+    expect(spec.paths["/api/session"]?.get?.operationId).toBe("v2.session.list")
+    expect(spec.paths["/api/session/{sessionID}"]?.get?.operationId).toBe("v2.session.get")
+  })
+
   test("documents nested legacy global sync events", () => {
     const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
     const schema = spec.components.schemas.SyncEventSessionCreated

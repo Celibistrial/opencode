@@ -2,9 +2,26 @@
 import { Effect, Schema } from "effect"
 import { Sse } from "effect/unstable/encoding"
 import { HttpClientError } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
-import { Api } from "@opencode-ai/api"
+import { HttpApi, HttpApiClient, HttpApiGroup } from "effect/unstable/httpapi"
+import {
+  SessionsList,
+  SessionsCreate,
+  SessionsGet,
+  SessionsSwitchAgent,
+  SessionsSwitchModel,
+  SessionsPrompt,
+} from "@opencode-ai/server/groups/session-endpoints"
 import { ClientError } from "./client-error"
+
+const Api = HttpApi.make("generated").add(
+  HttpApiGroup.make("sessions")
+    .add(SessionsList)
+    .add(SessionsCreate)
+    .add(SessionsGet)
+    .add(SessionsSwitchAgent)
+    .add(SessionsSwitchModel)
+    .add(SessionsPrompt),
+)
 
 type RawClient = HttpApiClient.ForApi<typeof Api>
 

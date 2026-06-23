@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { AbsolutePath, AgentID, ModelRef, SessionID } from "@opencode-ai/api"
+import { AbsolutePath } from "@opencode-ai/core/schema"
+import { AgentID, ModelRef, SessionID } from "@opencode-ai/server/groups/session-endpoints"
 import { DateTime, Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { OpenCode } from "../src/effect"
