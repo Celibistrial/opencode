@@ -30,7 +30,7 @@ const mapClientError = <E,>(error: E) =>
     ? new ClientError({ cause: error })
     : error
 
-type Endpoint0_0Request = Parameters<RawClient["sessions"]["list"]>[0]
+type Endpoint0_0Request = Parameters<RawClient["sessions"]["session.list"]>[0]
 type Endpoint0_0Input = {
   readonly workspace?: Endpoint0_0Request["query"]["workspace"]
   readonly limit?: Endpoint0_0Request["query"]["limit"]
@@ -42,7 +42,7 @@ type Endpoint0_0Input = {
   readonly cursor?: Endpoint0_0Request["query"]["cursor"]
 }
 const Endpoint0_0 = (raw: RawClient["sessions"]) => (input?: Endpoint0_0Input) =>
-  raw["list"]({
+  raw["session.list"]({
     query: {
       workspace: input?.workspace,
       limit: input?.limit,
@@ -55,7 +55,7 @@ const Endpoint0_0 = (raw: RawClient["sessions"]) => (input?: Endpoint0_0Input) =
     },
   }).pipe(Effect.mapError(mapClientError))
 
-type Endpoint0_1Request = Parameters<RawClient["sessions"]["create"]>[0]
+type Endpoint0_1Request = Parameters<RawClient["sessions"]["session.create"]>[0]
 type Endpoint0_1Input = {
   readonly id?: Endpoint0_1Request["payload"]["id"]
   readonly agent?: Endpoint0_1Request["payload"]["agent"]
@@ -63,42 +63,42 @@ type Endpoint0_1Input = {
   readonly location?: Endpoint0_1Request["payload"]["location"]
 }
 const Endpoint0_1 = (raw: RawClient["sessions"]) => (input?: Endpoint0_1Input) =>
-  raw["create"]({
+  raw["session.create"]({
     payload: { id: input?.id, agent: input?.agent, model: input?.model, location: input?.location },
   }).pipe(
     Effect.mapError(mapClientError),
     Effect.map((value) => value.data),
   )
 
-type Endpoint0_2Request = Parameters<RawClient["sessions"]["get"]>[0]
+type Endpoint0_2Request = Parameters<RawClient["sessions"]["session.get"]>[0]
 type Endpoint0_2Input = { readonly sessionID: Endpoint0_2Request["params"]["sessionID"] }
 const Endpoint0_2 = (raw: RawClient["sessions"]) => (input: Endpoint0_2Input) =>
-  raw["get"]({ params: { sessionID: input.sessionID } }).pipe(
+  raw["session.get"]({ params: { sessionID: input.sessionID } }).pipe(
     Effect.mapError(mapClientError),
     Effect.map((value) => value.data),
   )
 
-type Endpoint0_3Request = Parameters<RawClient["sessions"]["switchAgent"]>[0]
+type Endpoint0_3Request = Parameters<RawClient["sessions"]["session.switchAgent"]>[0]
 type Endpoint0_3Input = {
   readonly sessionID: Endpoint0_3Request["params"]["sessionID"]
   readonly agent: Endpoint0_3Request["payload"]["agent"]
 }
 const Endpoint0_3 = (raw: RawClient["sessions"]) => (input: Endpoint0_3Input) =>
-  raw["switchAgent"]({ params: { sessionID: input.sessionID }, payload: { agent: input.agent } }).pipe(
+  raw["session.switchAgent"]({ params: { sessionID: input.sessionID }, payload: { agent: input.agent } }).pipe(
     Effect.mapError(mapClientError),
   )
 
-type Endpoint0_4Request = Parameters<RawClient["sessions"]["switchModel"]>[0]
+type Endpoint0_4Request = Parameters<RawClient["sessions"]["session.switchModel"]>[0]
 type Endpoint0_4Input = {
   readonly sessionID: Endpoint0_4Request["params"]["sessionID"]
   readonly model: Endpoint0_4Request["payload"]["model"]
 }
 const Endpoint0_4 = (raw: RawClient["sessions"]) => (input: Endpoint0_4Input) =>
-  raw["switchModel"]({ params: { sessionID: input.sessionID }, payload: { model: input.model } }).pipe(
+  raw["session.switchModel"]({ params: { sessionID: input.sessionID }, payload: { model: input.model } }).pipe(
     Effect.mapError(mapClientError),
   )
 
-type Endpoint0_5Request = Parameters<RawClient["sessions"]["prompt"]>[0]
+type Endpoint0_5Request = Parameters<RawClient["sessions"]["session.prompt"]>[0]
 type Endpoint0_5Input = {
   readonly sessionID: Endpoint0_5Request["params"]["sessionID"]
   readonly id?: Endpoint0_5Request["payload"]["id"]
@@ -107,7 +107,7 @@ type Endpoint0_5Input = {
   readonly resume?: Endpoint0_5Request["payload"]["resume"]
 }
 const Endpoint0_5 = (raw: RawClient["sessions"]) => (input: Endpoint0_5Input) =>
-  raw["prompt"]({
+  raw["session.prompt"]({
     params: { sessionID: input.sessionID },
     payload: { id: input.id, prompt: input.prompt, delivery: input.delivery, resume: input.resume },
   }).pipe(

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { OpenCode } from "../src"
+import { isUnauthorizedError, OpenCode } from "../src"
 
 test("sessions.get returns the wire projection", async () => {
   const client = OpenCode.make({
@@ -60,6 +60,21 @@ test("session methods use the public HTTP contract", async () => {
     prompt: { text: "Hello" },
     resume: false,
   })
+})
+
+test("middleware errors remain declared client errors", async () => {
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async () =>
+      Response.json({ _tag: "UnauthorizedError", message: "Authentication required" }, { status: 401 }),
+  })
+
+  try {
+    await client.sessions.create({})
+    throw new Error("Expected request to fail")
+  } catch (error) {
+    expect(isUnauthorizedError(error)).toBe(true)
+  }
 })
 
 const session = {

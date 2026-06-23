@@ -16,13 +16,13 @@ import { SessionsCursor } from "../session-cursor"
 const DefaultSessionsLimit = 50
 const decodePrompt = Schema.decodeUnknownSync(Prompt)
 
-export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) =>
+export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* SessionV2.Service
 
     return handlers
       .handle(
-        "list",
+        "session.list",
         Effect.fn(function* (ctx) {
           const query =
             ctx.query.cursor !== undefined
@@ -65,7 +65,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "create",
+        "session.create",
         Effect.fn(function* (ctx) {
           return {
             data: yield* session.create({
@@ -78,7 +78,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "get",
+        "session.get",
         Effect.fn(function* (ctx) {
           return {
             data: yield* session.get(ctx.params.sessionID).pipe(
@@ -95,7 +95,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "switchAgent",
+        "session.switchAgent",
         Effect.fn(function* (ctx) {
           yield* session.switchAgent({ sessionID: ctx.params.sessionID, agent: ctx.payload.agent }).pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
@@ -111,7 +111,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "switchModel",
+        "session.switchModel",
         Effect.fn(function* (ctx) {
           yield* session.switchModel({ sessionID: ctx.params.sessionID, model: ctx.payload.model }).pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
@@ -127,7 +127,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "prompt",
+        "session.prompt",
         Effect.fn(function* (ctx) {
           return {
             data: yield* session
@@ -160,7 +160,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "compact",
+        "session.compact",
         Effect.fn(function* (ctx) {
           yield* session.compact({ sessionID: ctx.params.sessionID }).pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
@@ -184,7 +184,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "wait",
+        "session.wait",
         Effect.fn(function* (ctx) {
           yield* session.wait(ctx.params.sessionID).pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
@@ -208,7 +208,7 @@ export const SessionsHandler = HttpApiBuilder.group(Api, "sessions", (handlers) 
         }),
       )
       .handle(
-        "context",
+        "session.context",
         Effect.fn(function* (ctx) {
           return {
             data: yield* session.context(ctx.params.sessionID).pipe(

@@ -30,12 +30,12 @@ await Effect.runPromise(
         emitEffectImported(contract, {
           module: "@opencode-ai/server/groups/session-endpoints",
           endpoints: {
-            "sessions.list": "SessionsList",
-            "sessions.create": "SessionsCreate",
-            "sessions.get": "SessionsGet",
-            "sessions.switchAgent": "SessionsSwitchAgent",
-            "sessions.switchModel": "SessionsSwitchModel",
-            "sessions.prompt": "SessionsPrompt",
+            "sessions.session.list": "SessionsList",
+            "sessions.session.create": "SessionsCreate",
+            "sessions.session.get": "SessionsGet",
+            "sessions.session.switchAgent": "SessionsSwitchAgent",
+            "sessions.session.switchModel": "SessionsSwitchModel",
+            "sessions.session.prompt": "SessionsPrompt",
           },
         }),
         new URL("../src/generated-effect", import.meta.url).pathname,

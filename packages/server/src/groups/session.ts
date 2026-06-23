@@ -13,7 +13,10 @@ import {
   SessionsSwitchModel,
 } from "./session-endpoints"
 
-export const SessionGroup = HttpApiGroup.make("sessions")
+export { SessionsQuery } from "./session-endpoints"
+export { SessionsCursor } from "../session-cursor"
+
+export const SessionGroup = HttpApiGroup.make("server.session")
   .add(SessionsList)
   .add(SessionsCreate)
   .add(SessionsGet.middleware(SessionLocationMiddleware))
@@ -21,7 +24,7 @@ export const SessionGroup = HttpApiGroup.make("sessions")
   .add(SessionsSwitchModel.middleware(SessionLocationMiddleware))
   .add(SessionsPrompt.middleware(SessionLocationMiddleware))
   .add(
-    HttpApiEndpoint.post("compact", "/api/session/:sessionID/compact", {
+    HttpApiEndpoint.post("session.compact", "/api/session/:sessionID/compact", {
       params: { sessionID: SessionV2.ID },
       success: HttpApiSchema.NoContent,
       error: [SessionNotFoundError, ServiceUnavailableError],
@@ -36,7 +39,7 @@ export const SessionGroup = HttpApiGroup.make("sessions")
       ),
   )
   .add(
-    HttpApiEndpoint.post("wait", "/api/session/:sessionID/wait", {
+    HttpApiEndpoint.post("session.wait", "/api/session/:sessionID/wait", {
       params: { sessionID: SessionV2.ID },
       success: HttpApiSchema.NoContent,
       error: [SessionNotFoundError, ServiceUnavailableError],
@@ -51,7 +54,7 @@ export const SessionGroup = HttpApiGroup.make("sessions")
       ),
   )
   .add(
-    HttpApiEndpoint.get("context", "/api/session/:sessionID/context", {
+    HttpApiEndpoint.get("session.context", "/api/session/:sessionID/context", {
       params: { sessionID: SessionV2.ID },
       success: Schema.Struct({ data: Schema.Array(SessionMessage.Message) }),
       error: [SessionNotFoundError, UnknownError],

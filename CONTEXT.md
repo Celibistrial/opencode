@@ -136,12 +136,12 @@ _Avoid_: Response envelope
 - The Effect-native network constructor obtains `HttpClient.HttpClient` from its environment so callers own transport selection, recording, tracing, retries, and tests. Convenience runtimes may provide a fetch transport separately.
 - Creating **Embedded OpenCode** is scoped. Closing its owning Scope releases the in-process server resources, database resources, registrations, and fibers.
 - **Embedded OpenCode** exposes shared client capabilities and embedded-only capabilities on one object; consumers do not navigate through a nested `.client` property.
-- The **OpenCode Client** uses plural consumer-facing capability groups such as `sessions`; internal server identifiers such as `server.session` and `session.get` do not define its public names.
-- The public `HttpApi` is authoritative for shared **OpenCode Client** capabilities: the server hosts those exact endpoint declarations and code generation consumes them directly. Public endpoints are not duplicated or projected from a separately named internal contract.
+- The beta **OpenCode Client** currently uses plural consumer-facing capability groups such as `sessions`; whether the stable Session namespace should instead be singular `session` must be settled before stabilization. Internal server identifiers do not implicitly define public client names.
+- The public `HttpApi` is authoritative for shared **OpenCode Client** capabilities: the server and code generation reuse the same endpoint declaration objects. As a temporary beta compromise, generation composes a lightweight projection group from selected endpoints because importing the hosted Session group currently reaches heavy Core and server runtime modules.
 - SDK generation reflects the public `HttpApi` once into an **SDK Contract IR**. Promise and Effect emitters share endpoint structure and transport metadata without being required to expose identical public values: an emitter may select encoded wire types, decoded domain types, compile-time brands, runtime validation, and its own execution abstraction independently.
 - The first Effect emitter is the rich projection: it exposes decoded Effect-native values, preserves brands and schema transformations, performs runtime schema decoding, and delegates transport interpretation to `HttpApiClient`. Lighter wire-shaped Effect output remains possible through another emitter policy rather than constraining the shared IR.
 - The rich Effect emitter regenerates private executable schemas when the **SDK Contract IR** proves that their transport semantics can be reproduced exactly. Contracts with authoritative custom transformations use the import-based Effect emitter against the canonical V2 server `HttpApi`; the Promise emitter still derives zero-Effect structural wire types from the same IR.
-- `@opencode-ai/server` owns the authoritative V2 `HttpApi`. The real server and client generation consume that same API value; generator selection controls emitted capabilities without redefining their contracts.
+- `@opencode-ai/server` owns the authoritative V2 `HttpApi`. The hosted server group remains authoritative; the temporary generated projection must reuse its endpoint declarations exactly and must not independently redefine their HTTP contracts.
 - The first Promise emitter targets the same clean domain-oriented method organization rather than Hey API source compatibility. It returns unwrapped values directly, rejects declared and infrastructure failures, and begins with minimal client-level transport configuration; result wrappers, interceptors, and legacy generated signatures are outside the initial surface.
 - The first Promise emitter parses response syntax and trusts its generated structural types; it does not perform runtime structural validation. Malformed payload syntax fails, while a syntactically valid shape mismatch is not detected at the SDK boundary. Standalone validator generation remains an optional future emitter policy.
 - Declared Promise-client failures retain their tagged structural wire values and have generated type guards. Consumers do not depend on generated `Error` subclass identity, preserving discrimination across package copies and realms while remaining structurally aligned with Effect domain errors.
@@ -161,7 +161,7 @@ _Avoid_: Response envelope
 - The initial common OpenCode Client does not expose server-global event aggregation. `events.subscribe()` is bounded to the connected OpenCode instance or workspace; any future cross-instance administrative stream requires a separately designed API.
 - `events.subscribe()` does not automatically reconnect after transport loss. The live-only stream fails with `ClientError`; consumers refresh authoritative state before explicitly opening a new subscription because events missed during disconnection cannot be replayed.
 - `sessions.events({ sessionID, after })` returns the generated HTTP client's cold durable event stream and does not build reconnection policy into the endpoint or client constructor. Transport loss fails the stream with `ClientError`. Callers may compose an explicit resuming stream above it by retaining the last observed durable sequence and opening a new subscription with `after`; any reusable resume helper remains a separate API design question.
-- `sessions.list(...)` returns a **Page** in both networked and **Embedded OpenCode**; embedded execution does not define a separate unbounded array-returning list operation.
+- The stable `sessions.list(...)` design returns a **Page** in both networked and **Embedded OpenCode**; embedded execution does not define a separate unbounded array-returning list operation. The beta client currently preserves the existing HTTP `{ data, cursor }` envelope until emitter-level Page projection is implemented.
 - Session list cursors are opaque branded values carrying continuation query and ordering state. Consumers pass them back unchanged and do not inspect storage anchors or encoded filter fields.
 - A Session list continuation accepts only its opaque cursor. Scope, filters, ordering, and page size are fixed by the initial query and carried by that cursor.
 - `sessions.messages(...)` returns a **Page** and uses the same cursor discipline as `sessions.list(...)`: the initial request supplies `sessionID`, ordering, and page size; continuation supplies `sessionID` plus only an opaque branded message cursor carrying ordering, page size, direction, and message anchor. Using a cursor with another Session is invalid.
@@ -189,6 +189,24 @@ _Avoid_: Response envelope
 - Existing tool-managed output paths survive generic bounding. A fallback file retains exactly the complete projected text received by the Tool Registry and never claims to reconstruct output already discarded by tool-specific shaping.
 - **Managed Tool Output Files** use globally unique names in one shared flat directory. Their absolute paths are readable and searchable by ordinary tools; other absolute paths remain outside Location-scoped filesystem authority.
 - Provider-executed tool results remain provider-native transcript facts outside generic Tool Registry bounding. Their context control requires provider-aware pruning or compaction because some providers require exact structured round-trip payloads.
+
+## Deferred client contract cleanup
+
+The beta client currently reconstructs a small `HttpApi`/group projection from authoritative Session endpoint objects. This avoids pulling the full Core/server runtime graph into `@opencode-ai/client/effect`, but group membership, group annotations, and the client namespace are consequently maintained outside the hosted `SessionGroup`. This is an accepted beta compromise, not the intended stable boundary.
+
+Before stabilizing the client API:
+
+- Isolate runtime HTTP contract values into lightweight leaf modules. Importing Session, prompt, admission, message, model, location, and related schemas must not transitively load databases, Drizzle, Session execution, providers, watchers, native modules, or WASM.
+- Separate the `SessionLocationMiddleware` service tag and error contract from its database-backed layer implementation.
+- Export one lightweight authoritative `SessionGroup` and have both the server API and client codegen import that exact group value.
+- Remove the endpoint-map projection and generated shadow `HttpApiGroup` once the authoritative group is browser-safe to import.
+- Generate all appropriate shared Session operations from that group, including `compact`, `wait`, and `context`, rather than maintaining a selected six-endpoint list.
+- Project the existing list response envelope to the stable client **Page** shape and enforce separate initial-query and cursor-continuation inputs without changing the hosted V2 wire contract.
+- Settle the stable consumer namespace (`session` versus the current beta `sessions`) and use an explicit codegen annotation if the consumer name should differ from the server group identifier.
+- Preserve V2 route paths, operation IDs, codecs, errors, middleware behavior, and OpenAPI output while making this change.
+- Verify the isolated `@opencode-ai/client/effect` browser bundle does not include heavy embedded dependencies; those remain owned by `@opencode-ai/client/effect/embedded`.
+- Define embedded-host placement before supporting multiple hosts over one database. Hosts that share durable Session storage must also share process-local Session execution coordination, or each host must receive isolated storage explicitly.
+- Keep an embedded request scope alive until any streamed response body finishes. The initial non-streaming Session surface does not exercise this lifetime boundary; Session and instance event streams must do so before joining the embedded client.
 
 ## Example dialogue
 

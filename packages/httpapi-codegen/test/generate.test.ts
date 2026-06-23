@@ -88,6 +88,42 @@ describe("HttpApiCodegen.generate", () => {
     expect(client).toContain('const Api = HttpApi.make("generated").add(HttpApiGroup.make("session").add(SessionGet))')
   })
 
+  test("uses the unqualified endpoint name for the public client", () => {
+    const contract = compileContract(
+      api(
+        HttpApiEndpoint.get("session.get", "/session/:sessionID", {
+          params: { sessionID: Schema.String },
+          success: Schema.String,
+        }),
+      ),
+    )
+    const promise = emitPromise(contract).files.find((file) => file.path === "client.ts")?.content
+    const effect = emitEffectImported(contract, {
+      module: "@example/api",
+      endpoints: { "session.session.get": "SessionGet" },
+    }).files.find((file) => file.path === "client.ts")?.content
+
+    expect(contract.groups[0]?.endpoints[0]?.operation.name).toBe("get")
+    expect(promise).toContain('"get": (input: SessionGetInput, requestOptions?: RequestOptions)')
+    expect(effect).toContain('const adaptGroup0 = (raw: RawClient["session"]) => ({ "get": Endpoint0_0(raw) })')
+    expect(effect).toContain('raw["session.get"]')
+  })
+
+  test("preserves optional keys in Promise error types", () => {
+    class OptionalError extends Schema.TaggedErrorClass<OptionalError>()(
+      "OptionalError",
+      { message: Schema.String, detail: Schema.String.pipe(Schema.optional) },
+      { httpApiStatus: 400 },
+    ) {}
+    const output = emitPromise(
+      compileContract(api(HttpApiEndpoint.get("get", "/session", { success: Schema.String, error: OptionalError }))),
+    )
+
+    expect(output.files.find((file) => file.path === "types.ts")?.content).toContain(
+      'readonly "message": string; readonly "detail"?: string | undefined',
+    )
+  })
+
   test("erases brands from Promise wire types", () => {
     const output = emitPromise(
       compileContract(
@@ -103,6 +139,23 @@ describe("HttpApiCodegen.generate", () => {
 
     expect(types).toContain('readonly "sessionID": string')
     expect(types).not.toContain("Brand")
+  })
+
+  test("inlines non-recursive references in Promise wire types", () => {
+    const Referenced = Schema.Struct({ value: Schema.String }).annotate({ identifier: "Referenced" })
+    const output = emitPromise(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session", {
+            success: Schema.Struct({ data: Referenced }),
+          }),
+        ),
+      ),
+    )
+
+    expect(output.files.find((file) => file.path === "types.ts")?.content).toContain(
+      'export type SessionGetOutput = ({ readonly "data": ({ readonly "value": string }) })["data"]',
+    )
   })
 
   test("emits an optional Promise input when every field is optional", () => {

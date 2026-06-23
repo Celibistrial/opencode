@@ -2,8 +2,15 @@ export * as OpenCode from "./effect-embedded"
 
 import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { createEmbeddedRoutes } from "@opencode-ai/server/routes"
-import { Context, Effect, Layer } from "effect"
-import { HttpClient, HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { Cause, Context, Effect, Layer } from "effect"
+import {
+  HttpClient,
+  HttpRouter,
+  HttpServer,
+  HttpServerError,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http"
 import { OpenCode as Generated } from "./generated-effect/index"
 
 export const create = Effect.fn("OpenCode.create")(function* () {
@@ -18,9 +25,13 @@ export const create = Effect.fn("OpenCode.create")(function* () {
     Effect.fnUntraced(function* (request) {
       const response = yield* handler.pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, HttpServerRequest.fromClientRequest(request)),
-        Effect.orDie,
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : HttpServerError.causeResponse(cause).pipe(Effect.map(([response]) => response)),
+        ),
       )
-      return HttpServerResponse.toClientResponse(response)
+      return HttpServerResponse.toClientResponse(response, { request })
     }, Effect.scoped),
   )
   const client = yield* Generated.make({ baseUrl: "http://opencode.local" }).pipe(

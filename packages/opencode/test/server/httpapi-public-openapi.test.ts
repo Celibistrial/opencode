@@ -76,6 +76,9 @@ describe("PublicApi OpenAPI v2 errors", () => {
     expect(spec.paths["/session/{sessionID}"]?.get?.operationId).toBe("session.get")
     expect(spec.paths["/api/session"]?.get?.operationId).toBe("v2.session.list")
     expect(spec.paths["/api/session/{sessionID}"]?.get?.operationId).toBe("v2.session.get")
+    expect(responseRef(spec.paths["/api/session"]?.get?.responses?.["200"])).toBe(
+      "#/components/schemas/SessionsResponse",
+    )
   })
 
   test("documents nested legacy global sync events", () => {

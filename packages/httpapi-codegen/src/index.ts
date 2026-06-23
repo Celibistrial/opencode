@@ -143,7 +143,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
         effectPortable,
         operation: {
           group: group.identifier,
-          name: endpoint.name,
+          name: clientEndpointName(endpoint.name),
           input: inputs.map(({ name, source }) => ({ name, source })),
           inputMode: inputs.length === 0 ? "none" : inputs.every((field) => field.optional) ? "optional" : "required",
           success: isStreamSchema(success.schema)
@@ -177,7 +177,16 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
   )
   const publicNames = new Set<string>()
   for (const group of groups) {
-    const names = group.endpoints[0]?.topLevel ? group.endpoints.map((item) => item.endpoint.name) : [group.identifier]
+    const endpointNames = new Set<string>()
+    for (const endpoint of group.endpoints) {
+      if (endpointNames.has(endpoint.operation.name)) {
+        throw new GenerationError({
+          reason: `Client endpoint name collision: ${group.identifier}.${endpoint.operation.name}`,
+        })
+      }
+      endpointNames.add(endpoint.operation.name)
+    }
+    const names = group.endpoints[0]?.topLevel ? group.endpoints.map((item) => item.operation.name) : [group.identifier]
     for (const name of names) {
       if (publicNames.has(name)) throw new GenerationError({ reason: `Client name collision: ${name}` })
       publicNames.add(name)
@@ -324,7 +333,7 @@ function renderImportedEffectFiles(
       const mapped = `${rawCall}.pipe(Effect.mapError(mapClientError)${item.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
       return `${item.operation.inputMode === "none" ? "" : `type ${prefix}Request = Parameters<${rawGroup}[${JSON.stringify(item.endpoint.name)}]>[0]\ntype ${prefix}Input = { ${input} }\n`}const ${prefix} = (raw: ${rawGroup}) => (${argument}) => ${item.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(mapClientError), Effect.map((stream) => stream.pipe(Stream.mapError(mapClientError)))))` : mapped}`
     })
-    return `${methods.join("\n\n")}\n\nconst adaptGroup${groupIndex} = (raw: ${rawGroup}) => ({ ${group.endpoints.map((item, endpointIndex) => `${JSON.stringify(item.endpoint.name)}: Endpoint${groupIndex}_${endpointIndex}(raw)`).join(", ")} })`
+    return `${methods.join("\n\n")}\n\nconst adaptGroup${groupIndex} = (raw: ${rawGroup}) => ({ ${group.endpoints.map((item, endpointIndex) => `${JSON.stringify(item.operation.name)}: Endpoint${groupIndex}_${endpointIndex}(raw)`).join(", ")} })`
   })
   const fields = groups.flatMap((group, index) =>
     group.endpoints[0]?.topLevel
@@ -398,14 +407,14 @@ function renderPromiseTypes(groups: ReadonlyArray<Group>) {
   )
   const errorTypes = Array.from(errors.values()).map((error) => {
     const fields = error.fields
-      .map(([name, schema]) => `readonly ${JSON.stringify(name)}: ${typeOf(schema)}`)
+      .map(([name, schema, optional]) => `readonly ${JSON.stringify(name)}${optional ? "?" : ""}: ${typeOf(schema)}`)
       .join("; ")
     return `export type ${error.identifier} = { readonly _tag: ${JSON.stringify(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => typeof value === "object" && value !== null && "_tag" in value && value._tag === ${JSON.stringify(error.tag)}`
   })
   const operations = groups
     .flatMap((group) =>
       group.endpoints.flatMap((endpoint) => {
-        const prefix = promiseTypePrefix(group.identifier, endpoint.endpoint.name)
+        const prefix = promiseTypePrefix(group.identifier, endpoint.operation.name)
         const schemas = {
           params: endpoint.params,
           query: endpoint.query,
@@ -441,13 +450,13 @@ function renderPromiseTypes(groups: ReadonlyArray<Group>) {
 function renderPromiseClient(groups: ReadonlyArray<Group>) {
   const imports = groups.flatMap((group) =>
     group.endpoints.flatMap((endpoint) => {
-      const prefix = promiseTypePrefix(group.identifier, endpoint.endpoint.name)
+      const prefix = promiseTypePrefix(group.identifier, endpoint.operation.name)
       return [...(endpoint.operation.inputMode === "none" ? [] : [`${prefix}Input`]), `${prefix}Output`]
     }),
   )
   const fields = groups.map((group) => {
     const methods = group.endpoints.map((endpoint) => {
-      const prefix = promiseTypePrefix(group.identifier, endpoint.endpoint.name)
+      const prefix = promiseTypePrefix(group.identifier, endpoint.operation.name)
       const argument =
         endpoint.operation.inputMode === "none"
           ? "requestOptions?: RequestOptions"
@@ -478,10 +487,10 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
             reason: `Promise stream emission is not implemented: ${group.identifier}.${endpoint.endpoint.name}`,
           })
         }
-        return `${JSON.stringify(endpoint.endpoint.name)}: (${argument}): AsyncIterable<${prefix}Output> => sse<${prefix}Output>(${descriptor}, requestOptions)`
+        return `${JSON.stringify(endpoint.operation.name)}: (${argument}): AsyncIterable<${prefix}Output> => sse<${prefix}Output>(${descriptor}, requestOptions)`
       }
       const unwrap = endpoint.unwrapData ? ".then((value) => value.data)" : ""
-      return `${JSON.stringify(endpoint.endpoint.name)}: (${argument}) => request<${endpoint.unwrapData ? `{ readonly data: ${prefix}Output }` : `${prefix}Output`}>(${descriptor}, requestOptions)${unwrap}`
+      return `${JSON.stringify(endpoint.operation.name)}: (${argument}) => request<${endpoint.unwrapData ? `{ readonly data: ${prefix}Output }` : `${prefix}Output`}>(${descriptor}, requestOptions)${unwrap}`
     })
     if (group.endpoints[0]?.topLevel) return methods.join(", ")
     return `${JSON.stringify(group.identifier)}: { ${methods.join(", ")} }`
@@ -491,6 +500,10 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
 
 function promiseTypePrefix(group: string, endpoint: string) {
   return `${identifierPart(group)}${identifierPart(endpoint)}`
+}
+
+function clientEndpointName(name: string) {
+  return name.slice(name.lastIndexOf(".") + 1)
 }
 
 function identifierPart(value: string) {
@@ -508,12 +521,22 @@ function structuralType(schema: Schema.Top) {
       (artifact) =>
         artifact._tag !== "Import" || artifact.importDeclaration !== 'import type * as Brand from "effect/Brand"',
     ) ||
-    document.references.nonRecursives.length > 0 ||
     Object.keys(document.references.recursives).length > 0
   ) {
     throw new GenerationError({ reason: "Referenced Promise types are not implemented" })
   }
-  return document.codes[0].Type.replaceAll(/ & Brand\.Brand<"[^"]+">/g, "")
+  const references = new Map(
+    document.references.nonRecursives.map((reference) => [reference.$ref, reference.code.Type]),
+  )
+  const expand = (type: string, seen = new Set<string>()): string => {
+    for (const [reference, value] of references) {
+      if (!type.includes(reference)) continue
+      if (seen.has(reference)) throw new GenerationError({ reason: "Recursive Promise types are not implemented" })
+      type = type.replaceAll(reference, `(${expand(value, new Set([...seen, reference]))})`)
+    }
+    return type
+  }
+  return expand(document.codes[0].Type).replaceAll(/ & Brand\.Brand<"[^"]+">/g, "")
 }
 
 function promisePath(path: string, input: ReadonlyArray<InputField>) {
@@ -890,7 +913,9 @@ function taggedErrorFields(schema: Schema.Top) {
     tag: tag.literal,
     identifier: SchemaAST.resolveIdentifier(schema.ast) ?? tag.literal,
     fields: fields.propertySignatures.flatMap((field) =>
-      field.name === "_tag" || typeof field.name !== "string" ? [] : [[field.name, Schema.make(field.type)] as const],
+      field.name === "_tag" || typeof field.name !== "string"
+        ? []
+        : [[field.name, Schema.make(field.type), SchemaAST.isOptional(field.type)] as const],
     ),
   }
 }
@@ -1029,7 +1054,7 @@ function renderGroup(group: Group, groupIndex: number) {
   const groupSource = `HttpApiGroup.make(${JSON.stringify(group.identifier)}, { topLevel: ${group.endpoints[0]?.topLevel ?? false} })${endpointSources.map((endpoint) => `.add(${endpoint})`).join("")}`
   const usesHttpApiSchema = endpointSources.some((source) => source.includes("HttpApiSchema."))
   const methods = group.endpoints
-    .map((item, index) => `${JSON.stringify(item.endpoint.name)}: Endpoint${index}(raw)`)
+    .map((item, index) => `${JSON.stringify(item.operation.name)}: Endpoint${index}(raw)`)
     .join(", ")
   const rawGroup = group.endpoints[0]?.topLevel
     ? `HttpApiClient.Client<typeof Group${groupIndex}>`

@@ -5,11 +5,15 @@ export const isInvalidCursorError = (value: unknown): value is InvalidCursorErro
 export type InvalidRequestError = {
   readonly _tag: "InvalidRequestError"
   readonly message: string
-  readonly kind: string | undefined
-  readonly field: string | undefined
+  readonly kind?: string | undefined
+  readonly field?: string | undefined
 }
 export const isInvalidRequestError = (value: unknown): value is InvalidRequestError =>
   typeof value === "object" && value !== null && "_tag" in value && value._tag === "InvalidRequestError"
+
+export type UnauthorizedError = { readonly _tag: "UnauthorizedError"; readonly message: string }
+export const isUnauthorizedError = (value: unknown): value is UnauthorizedError =>
+  typeof value === "object" && value !== null && "_tag" in value && value._tag === "UnauthorizedError"
 
 export type SessionNotFoundError = {
   readonly _tag: "SessionNotFoundError"
@@ -22,7 +26,7 @@ export const isSessionNotFoundError = (value: unknown): value is SessionNotFound
 export type ConflictError = {
   readonly _tag: "ConflictError"
   readonly message: string
-  readonly resource: string | undefined
+  readonly resource?: string | undefined
 }
 export const isConflictError = (value: unknown): value is ConflictError =>
   typeof value === "object" && value !== null && "_tag" in value && value._tag === "ConflictError"
@@ -124,11 +128,7 @@ export type SessionsListOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: {
-      readonly created: number | "Infinity" | "-Infinity" | "NaN"
-      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
-      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
-    }
+    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -185,11 +185,7 @@ export type SessionsCreateOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: {
-      readonly created: number | "Infinity" | "-Infinity" | "NaN"
-      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
-      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
-    }
+    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -212,11 +208,7 @@ export type SessionsGetOutput = {
       readonly reasoning: number
       readonly cache: { readonly read: number; readonly write: number }
     }
-    readonly time: {
-      readonly created: number | "Infinity" | "-Infinity" | "NaN"
-      readonly updated: number | "Infinity" | "-Infinity" | "NaN"
-      readonly archived?: number | "Infinity" | "-Infinity" | "NaN" | null
-    }
+    readonly time: { readonly created: number; readonly updated: number; readonly archived?: number | null }
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string | null }
     readonly subpath?: string | null
@@ -355,7 +347,7 @@ export type SessionsPromptOutput = {
       }> | null
     }
     readonly delivery: "steer" | "queue"
-    readonly timeCreated: number | "Infinity" | "-Infinity" | "NaN"
+    readonly timeCreated: number
     readonly promotedSeq?: number | null
   }
 }["data"]
