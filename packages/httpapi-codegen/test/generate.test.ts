@@ -5,7 +5,14 @@ import { join } from "node:path"
 import { Effect, FileSystem, Schema, SchemaAST, SchemaGetter } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi"
 import { format } from "prettier"
-import { compile as compileContract, emitEffect, emitPromise, generate, GenerationError } from "../src"
+import {
+  compile as compileContract,
+  emitEffect,
+  emitEffectImported,
+  emitPromise,
+  generate,
+  GenerationError,
+} from "../src"
 import { it } from "./effect"
 import { Api as FixtureApi, Missing } from "./fixture"
 
@@ -39,6 +46,45 @@ describe("HttpApiCodegen.generate", () => {
     expect(effect.files.find((file) => file.path === "session.ts")?.content).toContain(
       'params: { "sessionID": input["sessionID"] }',
     )
+  })
+
+  test("emits an Effect client against an imported authoritative API", () => {
+    const output = emitEffectImported(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session/:sessionID", {
+            params: { sessionID: Schema.String },
+            success: Schema.Struct({ data: Schema.String }),
+          }),
+        ),
+      ),
+      { module: "@example/api", api: "Api" },
+    )
+
+    expect(output.files.map((file) => file.path)).toEqual(["client-error.ts", "client.ts", "index.ts"])
+    expect(output.files.find((file) => file.path === "client.ts")?.content).toContain(
+      'import { Api } from "@example/api"',
+    )
+    expect(output.files.find((file) => file.path === "client.ts")?.content).toContain(
+      "HttpApiClient.ForApi<typeof Api>",
+    )
+  })
+
+  test("erases brands from Promise wire types", () => {
+    const output = emitPromise(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session/:sessionID", {
+            params: { sessionID: Schema.String.pipe(Schema.brand("SessionID")) },
+            success: Schema.Struct({ data: Schema.String.pipe(Schema.brand("SessionID")) }),
+          }),
+        ),
+      ),
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types).toContain('readonly "sessionID": string')
+    expect(types).not.toContain("Brand")
   })
 
   test("emits an optional Promise input when every field is optional", () => {
@@ -520,7 +566,7 @@ describe("HttpApiCodegen.generate", () => {
           }),
         ),
       ),
-    ).toThrow("Unportable schema: session.get.query")
+    ).toThrow("Effect schema requires authoritative import: session.get")
   })
 
   test("rejects custom validation checks without portable metadata", () => {
@@ -559,7 +605,7 @@ describe("HttpApiCodegen.generate", () => {
     const Altered = Schema.make(ast)
 
     expect(() => compile(api(HttpApiEndpoint.get("get", "/session", { success: Altered })))).toThrow(
-      "Unportable schema: session.get.success",
+      "Effect schema requires authoritative import: session.get",
     )
   })
 

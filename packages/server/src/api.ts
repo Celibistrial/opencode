@@ -1,4 +1,12 @@
-import { HttpApi, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import {
+  SessionsCreate,
+  SessionsGet,
+  SessionsList,
+  SessionsPrompt,
+  SessionsSwitchAgent,
+  SessionsSwitchModel,
+} from "@opencode-ai/api"
 import { SchemaErrorMiddleware } from "./middleware/schema-error"
 import { MessageGroup } from "./groups/message"
 import { ModelGroup } from "./groups/model"
@@ -19,11 +27,21 @@ import { LocationGroup } from "./groups/location"
 import { IntegrationGroup } from "./groups/integration"
 import { CredentialGroup } from "./groups/credential"
 import { ProjectCopyGroup } from "./groups/project-copy"
+import { SessionLocationMiddleware } from "./middleware/session-location"
 
 export const Api = HttpApi.make("server")
   .add(HealthGroup)
   .add(LocationGroup)
   .add(AgentGroup)
+  .add(
+    HttpApiGroup.make("sessions")
+      .add(SessionsList)
+      .add(SessionsCreate)
+      .add(SessionsGet.middleware(SessionLocationMiddleware))
+      .add(SessionsSwitchAgent.middleware(SessionLocationMiddleware))
+      .add(SessionsSwitchModel.middleware(SessionLocationMiddleware))
+      .add(SessionsPrompt.middleware(SessionLocationMiddleware)),
+  )
   .add(SessionGroup)
   .add(MessageGroup)
   .add(ModelGroup)

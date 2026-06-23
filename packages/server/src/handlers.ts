@@ -25,11 +25,13 @@ import { IntegrationHandler } from "./handlers/integration"
 import { CredentialHandler } from "./handlers/credential"
 import { Credential } from "@opencode-ai/core/credential"
 import { ProjectCopyHandler } from "./handlers/project-copy"
+import { PublicSessionHandler } from "./handlers/public-session"
 
 export const handlers = Layer.mergeAll(
   HealthHandler,
   LocationHandler,
   AgentHandler,
+  PublicSessionHandler,
   SessionHandler,
   MessageHandler,
   ModelHandler,

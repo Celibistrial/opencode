@@ -51,6 +51,7 @@ export type Endpoint = {
   readonly unwrapData: boolean
   readonly errors: ReadonlyArray<Schema.Top>
   readonly successes: ReadonlyArray<Schema.Top>
+  readonly effectPortable: boolean
 }
 
 export type Group = {
@@ -101,10 +102,10 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
         schemas.map((schema) => normalizeTransport(schema, "error", endpoint, name)!),
       )
       const inputs = [
-        ...inputFields(params, "params", name),
-        ...inputFields(query, "query", name),
-        ...inputFields(headers, "headers", name),
-        ...payloads.flatMap((schema) => inputFields(schema, "payload", name)),
+        ...inputFields(params?.schema, "params", name),
+        ...inputFields(query?.schema, "query", name),
+        ...inputFields(headers?.schema, "headers", name),
+        ...payloads.flatMap((item) => inputFields(item.schema, "payload", name)),
       ]
       const names = new Set<string>()
       for (const field of inputs) {
@@ -113,37 +114,47 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
       }
 
       const schemaPaths: Array<readonly [string, Schema.Top]> = [
-        ...(params === undefined ? [] : [[`${name}.params`, params] as const]),
-        ...(query === undefined ? [] : [[`${name}.query`, query] as const]),
-        ...(headers === undefined ? [] : [[`${name}.headers`, headers] as const]),
-        ...payloads.map((schema) => [`${name}.payload`, schema] as const),
-        ...responseSchemas(success, `${name}.success`),
-        ...errorSchemas.map((schema) => [`${name}.error`, schema] as const),
+        ...(params === undefined ? [] : [[`${name}.params`, params.schema] as const]),
+        ...(query === undefined ? [] : [[`${name}.query`, query.schema] as const]),
+        ...(headers === undefined ? [] : [[`${name}.headers`, headers.schema] as const]),
+        ...payloads.map((item) => [`${name}.payload`, item.schema] as const),
+        ...responseSchemas(success.schema, `${name}.success`),
+        ...errorSchemas.map((item) => [`${name}.error`, item.schema] as const),
       ]
-      for (const [path, schema] of schemaPaths) assertPortable(schema, path, portable)
+      const effectPortable = [params, query, headers, ...payloads, success, ...errorSchemas].every(
+        (item) => item?.effectPortable !== false,
+      )
+      if (effectPortable) {
+        for (const [path, schema] of schemaPaths) assertPortable(schema, path, portable)
+      }
 
       endpoints.push({
         group: group.identifier,
         topLevel: group.topLevel,
         endpoint,
-        params,
-        query,
-        headers,
-        payloads,
+        params: params?.schema,
+        query: query?.schema,
+        headers: headers?.schema,
+        payloads: payloads.map((item) => item.schema),
         input: inputs,
-        unwrapData: isDataEnvelope(success),
-        successes: [success],
-        errors: errorSchemas,
+        unwrapData: isDataEnvelope(success.schema),
+        successes: [success.schema],
+        errors: errorSchemas.map((item) => item.schema),
+        effectPortable,
         operation: {
           group: group.identifier,
           name: endpoint.name,
           input: inputs.map(({ name, source }) => ({ name, source })),
           inputMode: inputs.length === 0 ? "none" : inputs.every((field) => field.optional) ? "optional" : "required",
-          success: isStreamSchema(success) ? "stream" : HttpApiSchema.isNoContent(success.ast) ? "void" : "value",
+          success: isStreamSchema(success.schema)
+            ? "stream"
+            : HttpApiSchema.isNoContent(success.schema.ast)
+              ? "void"
+              : "value",
           errors: [
             ...new Set([
-              ...errorSchemas.flatMap((schema) => {
-                const identifier = SchemaAST.resolveIdentifier(schema.ast)
+              ...errorSchemas.flatMap((item) => {
+                const identifier = SchemaAST.resolveIdentifier(item.schema.ast)
                 return identifier === undefined ? [] : [identifier]
               }),
               "ClientError",
@@ -178,7 +189,23 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Any>(
 }
 
 export function emitEffect(contract: Contract): Output {
+  const endpoint = contract.groups.flatMap((group) => group.endpoints).find((endpoint) => !endpoint.effectPortable)
+  if (endpoint !== undefined) {
+    throw new GenerationError({
+      reason: `Effect schema requires authoritative import: ${endpoint.group}.${endpoint.endpoint.name}`,
+    })
+  }
   return { operations: operations(contract.groups), files: renderEffectFiles(contract.groups) }
+}
+
+export function emitEffectImported(
+  contract: Contract,
+  options: { readonly module: string; readonly api: string },
+): Output {
+  return {
+    operations: operations(contract.groups),
+    files: renderImportedEffectFiles(contract.groups, options),
+  }
 }
 
 export function emitPromise(contract: Contract): Output {
@@ -192,9 +219,12 @@ export function emitPromise(contract: Contract): Output {
       { path: "types.ts", content: renderPromiseTypes(groups) },
       {
         path: "client-error.ts",
-        content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  readonly name = "ClientError"\n  constructor(readonly reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n  }\n}\n`,
+        content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  constructor(readonly reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n  }\n}\n`,
       },
-      { path: "client.ts", content: renderPromiseClient(groups) },
+      {
+        path: "client.ts",
+        content: renderPromiseClient(groups).replace("let next: ReadableStreamReadResult<Uint8Array>", "let next"),
+      },
       {
         path: "index.ts",
         content:
@@ -252,6 +282,60 @@ function renderEffectFiles(groups: ReadonlyArray<Group>): Output["files"] {
         'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedErrorClass<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
     },
     { path: "client.ts", content: renderClient(groups) },
+    {
+      path: "index.ts",
+      content: 'export { ClientError } from "./client-error"\nexport * as OpenCode from "./client"\n',
+    },
+  ]
+}
+
+function renderImportedEffectFiles(
+  groups: ReadonlyArray<Group>,
+  options: { readonly module: string; readonly api: string },
+): Output["files"] {
+  const adapters = groups.map((group, groupIndex) => {
+    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${JSON.stringify(group.identifier)}]`
+    const methods = group.endpoints.map((item, endpointIndex) => {
+      const prefix = `Endpoint${groupIndex}_${endpointIndex}`
+      const request = (["params", "query", "headers", "payload"] as const)
+        .flatMap((source) => {
+          const fields = item.input.filter((field) => field.source === source)
+          if (fields.length === 0) return []
+          return [
+            `${source}: { ${fields.map((field) => `${JSON.stringify(field.name)}: input${item.operation.inputMode === "optional" ? "?." : "."}${field.name}`).join(", ")} }`,
+          ]
+        })
+        .join(", ")
+      const input = item.input
+        .map(
+          (field) =>
+            `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: ${prefix}Request[${JSON.stringify(field.source)}][${JSON.stringify(field.name)}]`,
+        )
+        .join("; ")
+      const argument =
+        item.operation.inputMode === "none"
+          ? ""
+          : `input${item.operation.inputMode === "optional" ? "?" : ""}: ${prefix}Input`
+      const rawCall = `raw[${JSON.stringify(item.endpoint.name)}]({ ${request} })`
+      const mapped = `${rawCall}.pipe(Effect.mapError(mapClientError)${item.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
+      return `${item.operation.inputMode === "none" ? "" : `type ${prefix}Request = Parameters<${rawGroup}[${JSON.stringify(item.endpoint.name)}]>[0]\ntype ${prefix}Input = { ${input} }\n`}const ${prefix} = (raw: ${rawGroup}) => (${argument}) => ${item.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(mapClientError), Effect.map((stream) => stream.pipe(Stream.mapError(mapClientError)))))` : mapped}`
+    })
+    return `${methods.join("\n\n")}\n\nconst adaptGroup${groupIndex} = (raw: ${rawGroup}) => ({ ${group.endpoints.map((item, endpointIndex) => `${JSON.stringify(item.endpoint.name)}: Endpoint${groupIndex}_${endpointIndex}(raw)`).join(", ")} })`
+  })
+  const fields = groups.flatMap((group, index) =>
+    group.endpoints[0]?.topLevel
+      ? [`...adaptGroup${index}(raw)`]
+      : [`${JSON.stringify(group.identifier)}: adaptGroup${index}(raw[${JSON.stringify(group.identifier)}])`],
+  )
+  const usesStream = groups.some((group) => group.endpoints.some((item) => item.operation.success === "stream"))
+  const client = `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect${usesStream ? ", Stream" : ""}, Schema } from "effect"\nimport { Sse } from "effect/unstable/encoding"\nimport { HttpClientError } from "effect/unstable/http"\nimport { HttpApiClient } from "effect/unstable/httpapi"\nimport { ${options.api} } from ${JSON.stringify(options.module)}\nimport { ClientError } from "./client-error"\n\ntype RawClient = HttpApiClient.ForApi<typeof ${options.api}>\n\nconst mapClientError = <E>(error: E) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : error\n\n${adapters.join("\n\n")}\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) => HttpApiClient.make(${options.api}, options).pipe(Effect.map((raw) => ({ ${fields.join(", ")} })))\n`
+  return [
+    {
+      path: "client-error.ts",
+      content:
+        'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedErrorClass<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
+    },
+    { path: "client.ts", content: client },
     {
       path: "index.ts",
       content: 'export { ClientError } from "./client-error"\nexport * as OpenCode from "./client"\n',
@@ -387,13 +471,16 @@ function identifierPart(value: string) {
 function structuralType(schema: Schema.Top) {
   const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.fromASTs([schema.ast]))
   if (
-    document.artifacts.length > 0 ||
+    document.artifacts.some(
+      (artifact) =>
+        artifact._tag !== "Import" || artifact.importDeclaration !== 'import type * as Brand from "effect/Brand"',
+    ) ||
     document.references.nonRecursives.length > 0 ||
     Object.keys(document.references.recursives).length > 0
   ) {
     throw new GenerationError({ reason: "Referenced Promise types are not implemented" })
   }
-  return document.codes[0].Type
+  return document.codes[0].Type.replaceAll(/ & Brand\.Brand<"[^"]+">/g, "")
 }
 
 function promisePath(path: string, input: ReadonlyArray<InputField>) {
@@ -424,7 +511,8 @@ function normalizeTransport(
   endpoint: HttpApiEndpoint.AnyWithProps,
   operation: string,
 ) {
-  if (schema === undefined || isStreamSchema(schema)) return schema
+  if (schema === undefined) return undefined
+  if (isStreamSchema(schema)) return { schema, effectPortable: true } as const
   if (!metadataPortable(schema.ast, new Set())) {
     throw new GenerationError({ reason: `Unportable schema: ${operation}.${source}` })
   }
@@ -452,10 +540,9 @@ function normalizeTransport(
             : source === "success"
               ? Array.from(rebuilt.success)[0]
               : Array.from(rebuilt.error)[0]
-  if (normalized === undefined || !sameEncoding(schema.ast, normalized.ast)) {
-    throw new GenerationError({ reason: `Unportable schema: ${operation}.${source}` })
-  }
-  return decoded
+  if (normalized === undefined) throw new GenerationError({ reason: `Unportable schema: ${operation}.${source}` })
+  if (!sameEncoding(schema.ast, normalized.ast)) return { schema, effectPortable: false } as const
+  return { schema: decoded, effectPortable: true } as const
 }
 
 function isPathInput(path: string): path is HttpRouter.PathInput {

@@ -1,22 +1,22 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/httpapi-codegen",
+  "name": "@opencode-ai/api",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test --timeout 5000 --only-failures",
     "typecheck": "tsgo --noEmit"
   },
-  "dependencies": {
-    "effect": "catalog:",
-    "prettier": "3.6.2"
+  "peerDependencies": {
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@typescript/native-preview": "catalog:"
+    "@typescript/native-preview": "catalog:",
+    "effect": "catalog:"
   }
 }
