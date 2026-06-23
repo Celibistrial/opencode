@@ -153,7 +153,8 @@ _Avoid_: Response envelope
 - Promise client construction is synchronous and network-free. It requires `baseUrl`, defaults to `globalThis.fetch`, accepts client-level headers, and merges them with per-call header overrides.
 - Effect client construction accepts an explicit `baseUrl` and obtains `HttpClient.HttpClient` from the Effect environment. It does not install fetch or duplicate per-call transport policy; callers transform/provide the client for headers, tracing, retries, recording, and tests, while fiber interruption owns cancellation.
 - Promise and Effect emitters each own their generated public type modules. The **SDK Contract IR**, not a physically shared generated type package, is the common source; this permits zero-Effect wire types and rich decoded Effect types to evolve independently.
-- Promise and Effect client outputs ship from `@opencode-ai/client` behind isolated root, `/effect`, and `/effect/embedded` exports. The root export has no runtime path to Effect. During alpha, `/effect` imports the authoritative hosted group and therefore accepts its heavy private Core/server dependency closure; `/effect/embedded` additionally owns the scoped in-process host. The package remains private until the contract import graph and embedded packaging are settled.
+- Promise and Effect client outputs ship from `@opencode-ai/client` behind isolated root, `/effect`, and `/effect/embedded` exports. The root export has no runtime path to Effect. During beta, `/effect` imports the authoritative hosted group and therefore accepts its heavy private Core/server dependency closure; `/effect/embedded` additionally owns the scoped in-process host. The package remains private until the contract import graph and embedded packaging are settled.
+- During beta, `/effect` and `/effect/embedded` re-export their decoded datatype facade from the client package even though Core currently supplies those values. Stable extraction replaces the backing modules without requiring callers to change imports.
 - A capability intended for both networked and **Embedded OpenCode** belongs in the authoritative public `HttpApi`; embedded-only same-process capabilities extend **Embedded OpenCode** separately.
 - `sessions.events({ sessionID, after })` is a public durable Session event stream. It verifies the Session, replays durable events after the optional aggregate sequence, continues with newly committed durable events, excludes live-only fragments, and is transported as SSE in both networked and embedded modes.
 - `events.subscribe()` is a distinct public instance-wide live stream for Session and non-Session activity. It has no replay guarantee and includes connection, heartbeat, and instance-disposal lifecycle events; consumers recover from disconnection by refreshing authoritative state.
@@ -192,13 +193,17 @@ _Avoid_: Response envelope
 
 ## Deferred client contract cleanup
 
-The alpha client imports the exact hosted `SessionGroup`. This keeps server hosting and client generation structurally aligned, but currently pulls the full Core/server runtime graph into `@opencode-ai/client/effect`. That cost is accepted during alpha; the intended stable boundary keeps the same authoritative group while isolating its contract imports.
+The beta client imports the exact hosted `SessionGroup`. This keeps server hosting and client generation structurally aligned, but currently pulls the full Core/server runtime graph into `@opencode-ai/client/effect` and exposes canonical decoded Core values to Effect consumers. That cost is accepted for beta testing; this PR does not introduce a second transport model, reconstruct the group, or split published packages.
+
+The intended stable architecture extracts semantic values that mean the same thing internally and publicly into a lightweight shared-model leaf, then composes those values into an authoritative lightweight protocol `HttpApi`. Core consumes the shared model for domain behavior; Protocol consumes it for paths, payloads, envelopes, errors, cursors, and streams; Server imports both and owns any protocol/domain adaptation. The root Promise client remains zero-Effect, `/effect` depends on Effect plus Protocol, and `/effect/embedded` keeps Core plus Server behind the same public client surface.
 
 Before stabilizing the client API:
 
-- Isolate runtime HTTP contract values into lightweight leaf modules. Importing Session, prompt, admission, message, model, location, and related schemas must not transitively load databases, Drizzle, Session execution, providers, watchers, native modules, or WASM.
+- Extract stable structural domain schemas such as Session IDs, prompt, admission, model references, location references, and public Session information into a lightweight shared-model leaf used by both Core and Protocol.
+- Extract the exact hosted `HttpApi` into a lightweight protocol leaf. HTTP-only envelopes, queries, cursors, errors, status semantics, and SSE framing remain Protocol-owned and do not enter Core.
+- Importing Model or Protocol must not transitively load databases, Drizzle, Session execution, providers, watchers, native modules, or WASM.
 - Separate the `SessionLocationMiddleware` service tag and error contract from its database-backed layer implementation.
-- Make the existing authoritative `SessionGroup` browser-safe to import without changing server or generated client behavior.
+- Keep one authoritative `SessionGroup`, move its ownership to Protocol, and make it browser-safe to import without changing server or generated client behavior.
 - Project the existing list response envelope to the stable client **Page** shape and enforce separate initial-query and cursor-continuation inputs without changing the hosted V2 wire contract.
 - Settle the stable consumer namespace (`session` versus the current beta `sessions`) and use an explicit codegen annotation if the consumer name should differ from the server group identifier.
 - Preserve V2 route paths, operation IDs, codecs, errors, middleware behavior, and OpenAPI output while making this change.

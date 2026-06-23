@@ -1,7 +1,6 @@
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Prompt } from "@opencode-ai/core/session/prompt"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect } from "effect"
 import { HttpApiBuilder, HttpApiSchema } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import {
@@ -14,7 +13,6 @@ import {
 import { SessionsCursor } from "../session-cursor"
 
 const DefaultSessionsLimit = 50
-const decodePrompt = Schema.decodeUnknownSync(Prompt)
 
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
@@ -134,7 +132,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               .prompt({
                 sessionID: ctx.params.sessionID,
                 id: ctx.payload.id,
-                prompt: decodePrompt(ctx.payload.prompt),
+                prompt: ctx.payload.prompt,
                 delivery: ctx.payload.delivery,
                 resume: ctx.payload.resume,
               })

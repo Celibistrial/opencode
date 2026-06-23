@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test"
-import { AbsolutePath } from "@opencode-ai/core/schema"
-import { AgentID, ModelRef, SessionID } from "@opencode-ai/server/groups/session-endpoints"
 import { DateTime, Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { OpenCode } from "../src/effect"
+import { AbsolutePath, AgentV2, Location, ModelV2, OpenCode, Prompt, SessionInput, SessionV2 } from "../src/effect"
 
 test("sessions.get returns the decoded Effect projection", async () => {
   const httpClient = HttpClient.make((request) =>
@@ -11,7 +9,7 @@ test("sessions.get returns the decoded Effect projection", async () => {
   )
   const result = await Effect.gen(function* () {
     const client = yield* OpenCode.make({ baseUrl: "http://localhost:3000" })
-    return yield* client.sessions.get({ sessionID: SessionID.make("ses_test") })
+    return yield* client.sessions.get({ sessionID: SessionV2.ID.make("ses_test") })
   }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.runPromise)
 
   expect(DateTime.toEpochMillis(result.time.created)).toBe(1_717_171_717_000)
@@ -39,25 +37,31 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
   const result = await Effect.gen(function* () {
     const client = yield* OpenCode.make({ baseUrl: "http://localhost:3000" })
     const page = yield* client.sessions.list({ limit: 10 })
-    const created = yield* client.sessions.create({ location: { directory: AbsolutePath.make("/tmp/project") } })
-    yield* client.sessions.switchAgent({ sessionID: SessionID.make("ses_test"), agent: AgentID.make("build") })
+    const created = yield* client.sessions.create({
+      location: Location.Ref.make({ directory: AbsolutePath.make("/tmp/project") }),
+    })
+    yield* client.sessions.switchAgent({ sessionID: SessionV2.ID.make("ses_test"), agent: AgentV2.ID.make("build") })
     yield* client.sessions.switchModel({
-      sessionID: SessionID.make("ses_test"),
-      model: ModelRef.make({ id: "claude", providerID: "anthropic" }),
+      sessionID: SessionV2.ID.make("ses_test"),
+      model: ModelV2.Ref.make({ id: "claude", providerID: "anthropic" }),
     })
     const admitted = yield* client.sessions.prompt({
-      sessionID: SessionID.make("ses_test"),
-      prompt: { text: "Hello" },
+      sessionID: SessionV2.ID.make("ses_test"),
+      prompt: new Prompt({ text: "Hello" }),
       resume: false,
     })
-    yield* client.sessions.compact({ sessionID: SessionID.make("ses_test") })
-    yield* client.sessions.wait({ sessionID: SessionID.make("ses_test") })
-    const context = yield* client.sessions.context({ sessionID: SessionID.make("ses_test") })
+    yield* client.sessions.compact({ sessionID: SessionV2.ID.make("ses_test") })
+    yield* client.sessions.wait({ sessionID: SessionV2.ID.make("ses_test") })
+    const context = yield* client.sessions.context({ sessionID: SessionV2.ID.make("ses_test") })
     return { page, created, admitted, context }
   }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.runPromise)
 
   expect(DateTime.toEpochMillis(result.page.data[0].time.created)).toBe(1_717_171_717_000)
+  expect(result.page.data[0]).toBeInstanceOf(SessionV2.Info)
+  expect(result.created).toBeInstanceOf(SessionV2.Info)
   expect(result.created.id).toBe("ses_test")
+  expect(result.admitted).toBeInstanceOf(SessionInput.Admitted)
+  expect(result.admitted.prompt).toBeInstanceOf(Prompt)
   expect(DateTime.toEpochMillis(result.admitted.timeCreated)).toBe(1_717_171_717_000)
   expect(result.context).toEqual([])
 })

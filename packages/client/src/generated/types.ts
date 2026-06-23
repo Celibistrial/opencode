@@ -141,7 +141,7 @@ export type SessionsListInput = {
 export type SessionsListOutput = {
   readonly data: ReadonlyArray<{
     readonly id: string
-    readonly parentID?: string | null
+    readonly parentID?: string
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
@@ -198,7 +198,7 @@ export type SessionsCreateInput = {
 export type SessionsCreateOutput = {
   readonly data: {
     readonly id: string
-    readonly parentID?: string | null
+    readonly parentID?: string
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
@@ -221,7 +221,7 @@ export type SessionsGetInput = { readonly sessionID: { readonly sessionID: strin
 export type SessionsGetOutput = {
   readonly data: {
     readonly id: string
-    readonly parentID?: string | null
+    readonly parentID?: string
     readonly projectID: string
     readonly agent?: string | null
     readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string | null } | null
