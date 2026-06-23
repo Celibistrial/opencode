@@ -59,3 +59,28 @@ test("embedded client uses the real router and handlers", async () => {
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("embedded client is available as a Layer service", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opencode-embedded-layer-"))
+  const database = Flag.OPENCODE_DB
+  Flag.OPENCODE_DB = join(directory, "opencode.sqlite")
+  const { OpenCode } = await import("../src/effect-embedded")
+  const sessionID = SessionID.make(`ses_embedded_${crypto.randomUUID()}`)
+
+  try {
+    const created = await Effect.runPromise(
+      Effect.gen(function* () {
+        const opencode = yield* OpenCode.Service
+        return yield* opencode.sessions.create({
+          id: sessionID,
+          location: { directory: AbsolutePath.make(directory) },
+        })
+      }).pipe(Effect.provide(OpenCode.layer), Effect.scoped),
+    )
+
+    expect(created.id).toBe(sessionID)
+  } finally {
+    Flag.OPENCODE_DB = database
+    await rm(directory, { recursive: true, force: true })
+  }
+})

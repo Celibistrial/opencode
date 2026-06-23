@@ -23,4 +23,17 @@ const session = yield * opencode.sessions.get({ sessionID })
 
 It also exposes embedded-only `tools.register(...)`. Closing the owning Effect Scope releases the router resources, location services, fibers, and scoped tool registrations.
 
+Effect applications can provide the same scoped constructor as a service Layer:
+
+```ts
+const program = Effect.gen(function* () {
+  const opencode = yield* OpenCode.Service
+  return yield* opencode.sessions.get({ sessionID })
+})
+
+yield * program.pipe(Effect.provide(OpenCode.layer))
+```
+
+`OpenCode.layer` is only a dependency-injection adapter over `OpenCode.create()`; it does not define another embedded implementation.
+
 The beta embedded host currently assumes one active host per database. Multiple hosts sharing durable Session storage require shared process-local execution coordination and remain deferred together with embedded streaming support.
