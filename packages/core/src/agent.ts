@@ -1,7 +1,7 @@
 export * as AgentV2 from "./agent"
 
 import { Array, Context, Effect, Layer, Schema, Types } from "effect"
-import { Agent } from "@opencode-ai/model/agent"
+import { Agent } from "@opencode-ai/schema/agent"
 import { ModelV2 } from "./model"
 import { PermissionSchema } from "./permission/schema"
 import { ProviderV2 } from "./provider"

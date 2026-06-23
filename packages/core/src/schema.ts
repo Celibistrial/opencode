@@ -1,30 +1,27 @@
 import { Schema } from "effect"
 import {
-  AbsolutePath as ModelAbsolutePath,
+  AbsolutePath,
+  DateTimeUtcFromMillis,
+  externalID,
+  type ExternalID,
   NonNegativeInt,
   optionalOmitUndefined,
   PositiveInt,
-  RelativePath as ModelRelativePath,
-} from "@opencode-ai/model/schema"
-import { Hash } from "./util/hash"
+  RelativePath,
+  withStatics,
+} from "@opencode-ai/schema/schema"
 
-export { NonNegativeInt, optionalOmitUndefined, PositiveInt }
-
-export type ExternalID = {
-  readonly namespace: string
-  readonly key: string
+export {
+  AbsolutePath,
+  DateTimeUtcFromMillis,
+  externalID,
+  NonNegativeInt,
+  optionalOmitUndefined,
+  PositiveInt,
+  RelativePath,
+  withStatics,
 }
-
-export const externalID = (prefix: string, input: ExternalID) =>
-  `${prefix}_${Hash.sha256(JSON.stringify([input.namespace, input.key]))}`
-
-/**
- * Integer greater than zero.
- */
-export const RelativePath = ModelRelativePath
-export type RelativePath = typeof RelativePath.Type
-export const AbsolutePath = ModelAbsolutePath
-export type AbsolutePath = typeof AbsolutePath.Type
+export type { ExternalID }
 
 /**
  * Strip `readonly` from a nested type. Stand-in for `effect`'s `Types.DeepMutable`
@@ -53,22 +50,6 @@ export type DeepMutable<T> = T extends string | number | boolean | bigint | symb
       : T extends object
         ? { -readonly [K in keyof T]: DeepMutable<T[K]> }
         : T
-
-/**
- * Attach static methods to a schema object. Designed to be used with `.pipe()`:
- *
- * @example
- *   export const Foo = fooSchema.pipe(
- *     withStatics((schema) => ({
- *       zero: schema.make(0),
- *       from: Schema.decodeUnknownOption(schema),
- *     }))
- *   )
- */
-export const withStatics =
-  <S extends object, M extends Record<string, unknown>>(methods: (schema: S) => M) =>
-  (schema: S): S & M =>
-    Object.assign(schema, methods(schema))
 
 /**
  * Nominal wrapper for scalar types. The class itself is a valid schema —

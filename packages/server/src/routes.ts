@@ -1,5 +1,6 @@
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
+import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Layer, Option } from "effect"
@@ -15,7 +16,7 @@ export function createRoutes(password?: string) {
     password
       ? ServerAuth.Config.layer({ username: "opencode", password: Option.some(password) })
       : ServerAuth.Config.defaultLayer,
-  )
+  ).pipe(Layer.provide(ApplicationTools.layer))
 }
 
 export function createEmbeddedRoutes() {

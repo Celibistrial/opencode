@@ -1,7 +1,7 @@
-import { AbsolutePath, PositiveInt, RelativePath } from "@opencode-ai/model/schema"
-import { Project } from "@opencode-ai/model/project"
-import { Session } from "@opencode-ai/model/session"
-import { Workspace } from "@opencode-ai/model/workspace"
+import { AbsolutePath, PositiveInt, RelativePath } from "@opencode-ai/schema/schema"
+import { Project } from "@opencode-ai/schema/project"
+import { Session } from "@opencode-ai/schema/session"
+import { Workspace } from "@opencode-ai/schema/workspace"
 import { Effect, Encoding, Schema, Struct } from "effect"
 
 const fields = {

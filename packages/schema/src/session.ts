@@ -1,20 +1,13 @@
 export * as Session from "./session"
 
 import { Schema } from "effect"
-import { sha256 } from "@noble/hashes/sha2.js"
-import { bytesToHex } from "@noble/hashes/utils.js"
 import { Agent } from "./agent"
 import { Location } from "./location"
 import { Model } from "./model"
 import { Project } from "./project"
-import { DateTimeUtcFromMillis, optionalOmitUndefined, RelativePath } from "./schema"
+import { DateTimeUtcFromMillis, externalID, type ExternalID, optionalOmitUndefined, RelativePath } from "./schema"
 import { withStatics } from "./schema"
 import { descending } from "./identifier"
-
-export interface ExternalID {
-  readonly namespace: string
-  readonly key: string
-}
 
 export const ID = Schema.String.check(Schema.isStartsWith("ses")).pipe(
   Schema.brand("SessionID"),
@@ -23,16 +16,14 @@ export const ID = Schema.String.check(Schema.isStartsWith("ses")).pipe(
     return {
       create,
       descending: (id?: string) => (id === undefined ? create() : schema.make(id)),
-      fromExternal: (input: ExternalID) =>
-        schema.make(
-          "ses_" + bytesToHex(sha256(new TextEncoder().encode(JSON.stringify([input.namespace, input.key])))),
-        ),
+      fromExternal: (input: ExternalID) => schema.make(externalID("ses", input)),
     }
   }),
 )
 export type ID = typeof ID.Type
 
-export class Info extends Schema.Class<Info>("SessionV2.Info")({
+export interface Info extends Schema.Schema.Type<typeof Info> {}
+export const Info = Schema.Struct({
   id: ID,
   parentID: ID.pipe(optionalOmitUndefined),
   projectID: Project.ID,
@@ -56,7 +47,7 @@ export class Info extends Schema.Class<Info>("SessionV2.Info")({
   title: Schema.String,
   location: Location.Ref,
   subpath: RelativePath.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "SessionV2.Info" })
 
 export const ListAnchor = Schema.Struct({
   id: ID,

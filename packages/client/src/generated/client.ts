@@ -82,7 +82,7 @@ export function make(options: ClientOptions) {
     throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
   }
 
-  const request = async <A,>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
+  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
     if (descriptor.empty) {
@@ -94,7 +94,7 @@ export function make(options: ClientOptions) {
     return (await json(response)) as A
   }
 
-  const sse = <A,>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
+  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
     async *[Symbol.asyncIterator]() {
       const response = await execute(descriptor, requestOptions)
       if (response.status !== descriptor.successStatus) await responseError(response, descriptor)

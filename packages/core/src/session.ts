@@ -2,7 +2,7 @@ export * as SessionV2 from "./session"
 export * from "./session/schema"
 
 import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
-import { Session as ModelSession } from "@opencode-ai/model/session"
+import { Session as SchemaSession } from "@opencode-ai/schema/session"
 import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
@@ -39,7 +39,7 @@ import { SessionInput } from "./session/input"
 //   - by subpath
 // - by workspace (home is special)
 
-export const ListAnchor = ModelSession.ListAnchor
+export const ListAnchor = SchemaSession.ListAnchor
 export type ListAnchor = typeof ListAnchor.Type
 
 const ListInputBase = {

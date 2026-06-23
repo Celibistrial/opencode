@@ -1,5 +1,5 @@
 import { Schema, Types } from "effect"
-import { Model } from "@opencode-ai/model/model"
+import { Model } from "@opencode-ai/schema/model"
 import { ProviderV2 } from "./provider"
 import { ModelRequest } from "./model-request"
 

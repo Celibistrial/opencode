@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Equal, Hash, Layer, Schema } from "effect"
+import { DateTime, Effect, Layer, Schema } from "effect"
 import { Tool } from "@opencode-ai/core/public"
 import { define } from "@opencode-ai/plugin/v2/effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
@@ -34,7 +34,7 @@ const applicationTools = ApplicationTools.layer
 const it = testEffect(
   Layer.merge(
     Layer.mergeAll(applicationTools, Database.defaultLayer, EventV2.defaultLayer),
-    LocationServiceMap.layer.pipe(
+    LocationServiceMap.layerWithApplicationTools.pipe(
       Layer.provide(applicationTools),
       Layer.provide(
         Layer.mergeAll(
@@ -52,14 +52,24 @@ const it = testEffect(
 )
 
 describe("LocationServiceMap", () => {
-  it.effect("compares equivalent location refs by value", () =>
-    Effect.sync(() => {
-      const directory = AbsolutePath.make("/project")
-      expect(Equal.equals(Location.Ref.make({ directory }), Location.Ref.make({ directory }))).toBe(true)
-      expect(Hash.hash(Location.Ref.make({ directory }))).toBe(
-        Hash.hash(Location.Ref.make({ directory, workspaceID: undefined })),
-      )
-    }),
+  it.live("reuses cached services for equivalent location refs", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const locations = yield* LocationServiceMap
+            const directory = AbsolutePath.make(dir.path)
+            const first = yield* locations.contextEffect(Location.Ref.make({ directory }))
+            const second = yield* locations.contextEffect(Location.Ref.make({ directory, workspaceID: undefined }))
+
+            expect(first).toBe(second)
+          }),
+        ),
+      ),
+    ),
   )
 
   it.live("isolates location state while sharing location policy with catalog", () =>

@@ -10,7 +10,7 @@ const Api = HttpApi.make("generated").add(SessionGroup)
 
 type RawClient = HttpApiClient.ForApi<typeof Api>
 
-const mapClientError = <E,>(error: E) =>
+const mapClientError = <E>(error: E) =>
   HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error)
     ? new ClientError({ cause: error })
     : error
@@ -130,5 +130,7 @@ const adaptGroup0 = (raw: RawClient["server.session"]) => ({
   context: Endpoint0_8(raw),
 })
 
+const adaptClient = (raw: RawClient) => ({ sessions: adaptGroup0(raw["server.session"]) })
+
 export const make = (options?: { readonly baseUrl?: URL | string }) =>
-  HttpApiClient.make(Api, options).pipe(Effect.map((raw) => ({ sessions: adaptGroup0(raw["server.session"]) })))
+  HttpApiClient.make(Api, options).pipe(Effect.map(adaptClient))

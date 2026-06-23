@@ -1,6 +1,6 @@
 export * as SessionSchema from "./schema"
 
-import { Session } from "@opencode-ai/model/session"
+import { Session } from "@opencode-ai/schema/session"
 import type { ExternalID } from "../schema"
 
 export const ID = Session.ID

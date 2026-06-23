@@ -28,7 +28,7 @@ const SessionsLayer = SessionV2.layer.pipe(
   Layer.provide(EventV2.layer),
   Layer.provide(Database.defaultLayer),
   Layer.provide(ProjectV2.defaultLayer),
-  Layer.provide(LocationServiceMap.layer.pipe(Layer.provide(ApplicationTools.layer))),
+  Layer.provide(LocationServiceMap.layerWithApplicationTools.pipe(Layer.provide(ApplicationTools.layer))),
   Layer.orDie,
 )
 // TODO: Accept explicit storage so tests and embeddings can select disposable or application-owned persistence.

@@ -53,6 +53,6 @@ export const handlers = Layer.mergeAll(
   Layer.provide(SessionExecutionLocal.defaultLayer),
   Layer.provide(PermissionSaved.defaultLayer),
   Layer.provide(PtyTicket.defaultLayer),
-  Layer.provide(LocationServiceMap.layer),
+  Layer.provide(LocationServiceMap.layerWithApplicationTools),
   Layer.provide(Credential.defaultLayer),
 )

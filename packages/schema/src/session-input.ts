@@ -9,7 +9,8 @@ import { SessionMessage } from "./session-message"
 export const Delivery = Schema.Literals(["steer", "queue"])
 export type Delivery = typeof Delivery.Type
 
-export class Admitted extends Schema.Class<Admitted>("SessionInput.Admitted")({
+export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
+export const Admitted = Schema.Struct({
   admittedSeq: NonNegativeInt,
   id: SessionMessage.ID,
   sessionID: Session.ID,
@@ -17,4 +18,4 @@ export class Admitted extends Schema.Class<Admitted>("SessionInput.Admitted")({
   delivery: Delivery,
   timeCreated: DateTimeUtcFromMillis,
   promotedSeq: NonNegativeInt.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "SessionInput.Admitted" })

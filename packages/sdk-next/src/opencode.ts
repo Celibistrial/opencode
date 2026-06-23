@@ -1,5 +1,5 @@
-export * as OpenCode from "./effect-embedded"
-
+import { OpenCode } from "@opencode-ai/client/effect"
+import { PermissionSaved } from "@opencode-ai/core/permission/saved"
 import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { createEmbeddedRoutes } from "@opencode-ai/server/routes"
 import { Cause, Context, Effect, Layer } from "effect"
@@ -11,20 +11,19 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http"
-import { OpenCode as Generated } from "./generated-effect/index"
 
 export const create = Effect.fn("OpenCode.create")(function* () {
-  const context = yield* Layer.build(
-    Layer.merge(
-      createEmbeddedRoutes().pipe(Layer.provide(HttpServer.layerServices), Layer.provideMerge(HttpRouter.layer)),
-      ApplicationTools.layer,
-    ),
-  )
-  const handler = Context.get(context, HttpRouter.HttpRouter).asHttpEffect()
+  const { handler, permissions, tools } = yield* Effect.all({
+    handler: HttpRouter.toHttpEffect(createEmbeddedRoutes().pipe(Layer.provide(HttpServer.layerServices))),
+    permissions: PermissionSaved.Service,
+    tools: ApplicationTools.Service,
+  }).pipe(Effect.provide(Layer.merge(ApplicationTools.layer, PermissionSaved.defaultLayer)))
   const httpClient = HttpClient.make(
     Effect.fnUntraced(function* (request) {
       const response = yield* handler.pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, HttpServerRequest.fromClientRequest(request)),
+        Effect.provideService(ApplicationTools.Service, tools),
+        Effect.provideService(PermissionSaved.Service, permissions),
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.interrupt
@@ -34,10 +33,9 @@ export const create = Effect.fn("OpenCode.create")(function* () {
       return HttpServerResponse.toClientResponse(response, { request })
     }, Effect.scoped),
   )
-  const client = yield* Generated.make({ baseUrl: "http://opencode.local" }).pipe(
+  const client = yield* OpenCode.make({ baseUrl: "http://opencode.local" }).pipe(
     Effect.provideService(HttpClient.HttpClient, httpClient),
   )
-  const tools = Context.get(context, ApplicationTools.Service)
   return {
     ...client,
     tools: { register: tools.register },
@@ -46,20 +44,6 @@ export const create = Effect.fn("OpenCode.create")(function* () {
 
 export type Interface = Effect.Success<ReturnType<typeof create>>
 
-export class Service extends Context.Service<Service, Interface>()("@opencode-ai/client/OpenCode") {}
+export class Service extends Context.Service<Service, Interface>()("@opencode-ai/sdk-next/OpenCode") {}
 
 export const layer = Layer.effect(Service, create())
-
-export { ClientError } from "./generated-effect/index"
-export { Tool } from "@opencode-ai/core/public/tool"
-export {
-  Agent,
-  Location,
-  Model,
-  AbsolutePath,
-  RelativePath,
-  Session,
-  SessionInput,
-  SessionMessage,
-  Prompt,
-} from "./effect"

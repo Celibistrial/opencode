@@ -1,1 +1,1 @@
-export { AgentAttachment, FileAttachment, Prompt, Source } from "@opencode-ai/model/prompt"
+export { AgentAttachment, FileAttachment, Prompt, Source } from "@opencode-ai/schema/prompt"

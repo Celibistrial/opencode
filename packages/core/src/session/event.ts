@@ -2,12 +2,10 @@ import { Schema } from "effect"
 import { ProviderMetadata, ToolContent } from "@opencode-ai/llm"
 import { EventV2 } from "../event"
 import { ModelV2 } from "../model"
-import { NonNegativeInt } from "../schema"
-import { V2Schema } from "../v2-schema"
+import { DateTimeUtcFromMillis, NonNegativeInt, RelativePath } from "../schema"
 import { FileAttachment, Prompt } from "./prompt"
 import { SessionSchema } from "./schema"
 import { Location } from "../location"
-import { RelativePath } from "../schema"
 import { SessionMessageID } from "./message-id"
 
 export { FileAttachment }
@@ -22,7 +20,7 @@ export const Source = Schema.Struct({
 export type Source = typeof Source.Type
 
 const Base = {
-  timestamp: V2Schema.DateTimeUtcFromMillis,
+  timestamp: DateTimeUtcFromMillis,
   sessionID: SessionSchema.ID,
 }
 const PromptFields = {

@@ -2,7 +2,7 @@ export * as SessionInput from "./input"
 
 import { and, asc, eq, isNull, lte } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
-import { SessionInput as ModelSessionInput } from "@opencode-ai/model/session-input"
+import { SessionInput as SchemaSessionInput } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
 import type { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -13,17 +13,17 @@ import { SessionInputTable, SessionMessageTable } from "./sql"
 
 type DatabaseService = Database.Interface["db"]
 
-export const Delivery = ModelSessionInput.Delivery
+export const Delivery = SchemaSessionInput.Delivery
 export type Delivery = typeof Delivery.Type
 
-export const Admitted = ModelSessionInput.Admitted
-export type Admitted = ModelSessionInput.Admitted
+export const Admitted = SchemaSessionInput.Admitted
+export type Admitted = SchemaSessionInput.Admitted
 
 const decodePrompt = Schema.decodeUnknownSync(Prompt)
 const encodePrompt = Schema.encodeSync(Prompt)
 
 const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted =>
-  new Admitted({
+  Admitted.make({
     admittedSeq: row.admitted_seq,
     id: SessionMessage.ID.make(row.id),
     sessionID: SessionSchema.ID.make(row.session_id),
@@ -68,7 +68,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
         event.durable === undefined
           ? Effect.die("Prompt admission event is missing aggregate sequence")
           : Effect.succeed(
-              new Admitted({
+              Admitted.make({
                 admittedSeq: event.durable.seq,
                 id: input.id,
                 sessionID: input.sessionID,

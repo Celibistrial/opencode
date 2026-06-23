@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { DateTime, Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { AbsolutePath, Agent, Location, Model, OpenCode, Prompt, Session, SessionInput } from "../src/effect"
+import { AbsolutePath, Agent, Location, Model, OpenCode, Prompt, Session } from "../src/effect"
 
 test("sessions.get returns the decoded Effect projection", async () => {
   const httpClient = HttpClient.make((request) =>
@@ -47,7 +47,7 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
     })
     const admitted = yield* client.sessions.prompt({
       sessionID: Session.ID.make("ses_test"),
-      prompt: new Prompt({ text: "Hello" }),
+      prompt: Prompt.make({ text: "Hello" }),
       resume: false,
     })
     yield* client.sessions.compact({ sessionID: Session.ID.make("ses_test") })
@@ -57,11 +57,11 @@ test("session methods retain decoded Effect inputs and outputs", async () => {
   }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.runPromise)
 
   expect(DateTime.toEpochMillis(result.page.data[0].time.created)).toBe(1_717_171_717_000)
-  expect(result.page.data[0]).toBeInstanceOf(Session.Info)
-  expect(result.created).toBeInstanceOf(Session.Info)
+  expect(Object.getPrototypeOf(result.page.data[0])).toBe(Object.prototype)
+  expect(Object.getPrototypeOf(result.created)).toBe(Object.prototype)
   expect(result.created.id).toBe("ses_test")
-  expect(result.admitted).toBeInstanceOf(SessionInput.Admitted)
-  expect(result.admitted.prompt).toBeInstanceOf(Prompt)
+  expect(Object.getPrototypeOf(result.admitted)).toBe(Object.prototype)
+  expect(Object.getPrototypeOf(result.admitted.prompt)).toBe(Object.prototype)
   expect(DateTime.toEpochMillis(result.admitted.timeCreated)).toBe(1_717_171_717_000)
   expect(result.context).toEqual([])
 })

@@ -36,41 +36,47 @@ const Base = {
   time: Schema.Struct({ created: DateTimeUtcFromMillis }),
 }
 
-export class AgentSwitched extends Schema.Class<AgentSwitched>("Session.Message.AgentSwitched")({
+export interface AgentSwitched extends Schema.Schema.Type<typeof AgentSwitched> {}
+export const AgentSwitched = Schema.Struct({
   ...Base,
   type: Schema.Literal("agent-switched"),
   agent: Schema.String,
-}) {}
+}).annotate({ identifier: "Session.Message.AgentSwitched" })
 
-export class ModelSwitched extends Schema.Class<ModelSwitched>("Session.Message.ModelSwitched")({
+export interface ModelSwitched extends Schema.Schema.Type<typeof ModelSwitched> {}
+export const ModelSwitched = Schema.Struct({
   ...Base,
   type: Schema.Literal("model-switched"),
   model: Model.Ref,
-}) {}
+}).annotate({ identifier: "Session.Message.ModelSwitched" })
 
-export class User extends Schema.Class<User>("Session.Message.User")({
+export interface User extends Schema.Schema.Type<typeof User> {}
+export const User = Schema.Struct({
   ...Base,
   text: Prompt.fields.text,
   files: Prompt.fields.files,
   agents: Prompt.fields.agents,
   type: Schema.Literal("user"),
   time: Schema.Struct({ created: DateTimeUtcFromMillis }),
-}) {}
+}).annotate({ identifier: "Session.Message.User" })
 
-export class Synthetic extends Schema.Class<Synthetic>("Session.Message.Synthetic")({
+export interface Synthetic extends Schema.Schema.Type<typeof Synthetic> {}
+export const Synthetic = Schema.Struct({
   ...Base,
   sessionID: Session.ID,
   text: Schema.String,
   type: Schema.Literal("synthetic"),
-}) {}
+}).annotate({ identifier: "Session.Message.Synthetic" })
 
-export class System extends Schema.Class<System>("Session.Message.System")({
+export interface System extends Schema.Schema.Type<typeof System> {}
+export const System = Schema.Struct({
   ...Base,
   type: Schema.Literal("system"),
   text: Schema.String,
-}) {}
+}).annotate({ identifier: "Session.Message.System" })
 
-export class Shell extends Schema.Class<Shell>("Session.Message.Shell")({
+export interface Shell extends Schema.Schema.Type<typeof Shell> {}
+export const Shell = Schema.Struct({
   ...Base,
   type: Schema.Literal("shell"),
   callID: Schema.String,
@@ -80,21 +86,24 @@ export class Shell extends Schema.Class<Shell>("Session.Message.Shell")({
     created: DateTimeUtcFromMillis,
     completed: DateTimeUtcFromMillis.pipe(Schema.optional),
   }),
-}) {}
+}).annotate({ identifier: "Session.Message.Shell" })
 
-export class ToolStatePending extends Schema.Class<ToolStatePending>("Session.Message.ToolState.Pending")({
+export interface ToolStatePending extends Schema.Schema.Type<typeof ToolStatePending> {}
+export const ToolStatePending = Schema.Struct({
   status: Schema.Literal("pending"),
   input: Schema.String,
-}) {}
+}).annotate({ identifier: "Session.Message.ToolState.Pending" })
 
-export class ToolStateRunning extends Schema.Class<ToolStateRunning>("Session.Message.ToolState.Running")({
+export interface ToolStateRunning extends Schema.Schema.Type<typeof ToolStateRunning> {}
+export const ToolStateRunning = Schema.Struct({
   status: Schema.Literal("running"),
   input: Schema.Record(Schema.String, Schema.Unknown),
   structured: Schema.Record(Schema.String, Schema.Any),
   content: ToolContent.pipe(Schema.Array),
-}) {}
+}).annotate({ identifier: "Session.Message.ToolState.Running" })
 
-export class ToolStateCompleted extends Schema.Class<ToolStateCompleted>("Session.Message.ToolState.Completed")({
+export interface ToolStateCompleted extends Schema.Schema.Type<typeof ToolStateCompleted> {}
+export const ToolStateCompleted = Schema.Struct({
   status: Schema.Literal("completed"),
   input: Schema.Record(Schema.String, Schema.Unknown),
   attachments: FileAttachment.pipe(Schema.Array, Schema.optional),
@@ -102,23 +111,25 @@ export class ToolStateCompleted extends Schema.Class<ToolStateCompleted>("Sessio
   outputPaths: Schema.Array(Schema.String).pipe(Schema.optional),
   structured: Schema.Record(Schema.String, Schema.Any),
   result: Schema.Unknown.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "Session.Message.ToolState.Completed" })
 
-export class ToolStateError extends Schema.Class<ToolStateError>("Session.Message.ToolState.Error")({
+export interface ToolStateError extends Schema.Schema.Type<typeof ToolStateError> {}
+export const ToolStateError = Schema.Struct({
   status: Schema.Literal("error"),
   input: Schema.Record(Schema.String, Schema.Unknown),
   content: ToolContent.pipe(Schema.Array),
   structured: Schema.Record(Schema.String, Schema.Any),
   error: UnknownError,
   result: Schema.Unknown.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "Session.Message.ToolState.Error" })
 
 export const ToolState = Schema.Union([ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError]).pipe(
   Schema.toTaggedUnion("status"),
 )
-export type ToolState = typeof ToolState.Type
+export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
 
-export class AssistantTool extends Schema.Class<AssistantTool>("Session.Message.Assistant.Tool")({
+export interface AssistantTool extends Schema.Schema.Type<typeof AssistantTool> {}
+export const AssistantTool = Schema.Struct({
   type: Schema.Literal("tool"),
   id: Schema.String,
   name: Schema.String,
@@ -134,27 +145,30 @@ export class AssistantTool extends Schema.Class<AssistantTool>("Session.Message.
     completed: DateTimeUtcFromMillis.pipe(Schema.optional),
     pruned: DateTimeUtcFromMillis.pipe(Schema.optional),
   }),
-}) {}
+}).annotate({ identifier: "Session.Message.Assistant.Tool" })
 
-export class AssistantText extends Schema.Class<AssistantText>("Session.Message.Assistant.Text")({
+export interface AssistantText extends Schema.Schema.Type<typeof AssistantText> {}
+export const AssistantText = Schema.Struct({
   type: Schema.Literal("text"),
   id: Schema.String,
   text: Schema.String,
-}) {}
+}).annotate({ identifier: "Session.Message.Assistant.Text" })
 
-export class AssistantReasoning extends Schema.Class<AssistantReasoning>("Session.Message.Assistant.Reasoning")({
+export interface AssistantReasoning extends Schema.Schema.Type<typeof AssistantReasoning> {}
+export const AssistantReasoning = Schema.Struct({
   type: Schema.Literal("reasoning"),
   id: Schema.String,
   text: Schema.String,
   providerMetadata: ProviderMetadata.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "Session.Message.Assistant.Reasoning" })
 
 export const AssistantContent = Schema.Union([AssistantText, AssistantReasoning, AssistantTool]).pipe(
   Schema.toTaggedUnion("type"),
 )
-export type AssistantContent = typeof AssistantContent.Type
+export type AssistantContent = AssistantText | AssistantReasoning | AssistantTool
 
-export class Assistant extends Schema.Class<Assistant>("Session.Message.Assistant")({
+export interface Assistant extends Schema.Schema.Type<typeof Assistant> {}
+export const Assistant = Schema.Struct({
   ...Base,
   type: Schema.Literal("assistant"),
   agent: Schema.String,
@@ -177,15 +191,16 @@ export class Assistant extends Schema.Class<Assistant>("Session.Message.Assistan
     created: DateTimeUtcFromMillis,
     completed: DateTimeUtcFromMillis.pipe(Schema.optional),
   }),
-}) {}
+}).annotate({ identifier: "Session.Message.Assistant" })
 
-export class Compaction extends Schema.Class<Compaction>("Session.Message.Compaction")({
+export interface Compaction extends Schema.Schema.Type<typeof Compaction> {}
+export const Compaction = Schema.Struct({
   type: Schema.Literal("compaction"),
   reason: Schema.Literals(["auto", "manual"]),
   summary: Schema.String,
   recent: Schema.String,
   ...Base,
-}) {}
+}).annotate({ identifier: "Session.Message.Compaction" })
 
 export const Message = Schema.Union([
   AgentSwitched,
@@ -199,5 +214,5 @@ export const Message = Schema.Union([
 ])
   .pipe(Schema.toTaggedUnion("type"))
   .annotate({ identifier: "Session.Message" })
-export type Message = typeof Message.Type
+export type Message = AgentSwitched | ModelSwitched | User | Synthetic | System | Shell | Assistant | Compaction
 export type Type = Message["type"]

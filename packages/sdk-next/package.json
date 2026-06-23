@@ -1,20 +1,20 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/protocol",
+  "name": "@opencode-ai/sdk-next",
   "private": true,
   "type": "module",
   "license": "MIT",
   "exports": {
-    "./errors": "./src/errors.ts",
-    "./session": "./src/session.ts",
-    "./session-cursor": "./src/session-cursor.ts",
-    "./middleware/session-location": "./src/middleware/session-location.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "bun test --timeout 5000",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/schema": "workspace:*",
+    "@opencode-ai/client": "workspace:*",
+    "@opencode-ai/core": "workspace:*",
+    "@opencode-ai/server": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

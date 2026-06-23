@@ -6,12 +6,11 @@ import { adaptGroup1, Group1 } from "./event"
 import { adaptGroup2, Group2 } from "./system"
 
 const Api = HttpApi.make("generated").add(Group0).add(Group1).add(Group2)
+const adaptClient = (raw: HttpApiClient.ForApi<typeof Api>) => ({
+  session: adaptGroup0(raw["session"]),
+  event: adaptGroup1(raw["event"]),
+  ...adaptGroup2({ status: raw["status"] }),
+})
 
 export const make = (options?: { readonly baseUrl?: URL | string }) =>
-  HttpApiClient.make(Api, options).pipe(
-    Effect.map((raw) => ({
-      session: adaptGroup0(raw["session"]),
-      event: adaptGroup1(raw["event"]),
-      ...adaptGroup2({ status: raw["status"] }),
-    })),
-  )
+  HttpApiClient.make(Api, options).pipe(Effect.map(adaptClient))

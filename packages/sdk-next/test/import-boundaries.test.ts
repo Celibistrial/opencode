@@ -1,47 +1,32 @@
-import { describe, expect, test } from "bun:test"
-import { realpathSync } from "node:fs"
+import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 
 const directory = resolve(import.meta.dir, "..")
-const effect = realpathSync(resolve(import.meta.dir, "../node_modules/effect"))
-const schema = resolve(import.meta.dir, "../../schema")
-const protocol = resolve(import.meta.dir, "../../protocol")
+const client = resolve(import.meta.dir, "../../client")
 const core = resolve(import.meta.dir, "../../core")
 const server = resolve(import.meta.dir, "../../server")
 
-describe("public import boundaries", () => {
-  test("isolates each public entrypoint", async () => {
-    const root = await bundleInputs("@opencode-ai/client", "browser")
+test("bundles the client and in-memory host", async () => {
+  const inputs = await bundleInputs()
 
-    expect(within(root, effect)).toEqual([])
-    expect(within(root, schema)).toEqual([])
-    expect(within(root, protocol)).toEqual([])
-    expect(within(root, core)).toEqual([])
-    expect(within(root, server)).toEqual([])
-
-    const network = await bundleInputs("@opencode-ai/client/effect", "browser")
-
-    expect(within(network, effect).length).toBeGreaterThan(0)
-    expect(within(network, schema).length).toBeGreaterThan(0)
-    expect(within(network, protocol).length).toBeGreaterThan(0)
-    expect(within(network, core)).toEqual([])
-    expect(within(network, server)).toEqual([])
-  })
+  expect(within(inputs, client).length).toBeGreaterThan(0)
+  expect(within(inputs, core).length).toBeGreaterThan(0)
+  expect(within(inputs, server).length).toBeGreaterThan(0)
 })
 
-async function bundleInputs(specifier: string, target: "browser" | "bun") {
+async function bundleInputs() {
   const temporary = await mkdtemp(join(import.meta.dir, ".import-boundary-"))
   const entrypoint = join(temporary, "index.ts")
   const metafile = join(temporary, "meta.json")
   try {
-    await Bun.write(entrypoint, `export * from ${JSON.stringify(specifier)}`)
+    await Bun.write(entrypoint, 'export * from "@opencode-ai/sdk-next"')
     const child = Bun.spawn(
       [
         process.execPath,
         "build",
         entrypoint,
-        `--target=${target}`,
+        "--target=bun",
         "--format=esm",
         "--packages=bundle",
         `--metafile=${metafile}`,

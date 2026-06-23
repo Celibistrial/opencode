@@ -9,11 +9,9 @@ test("embedded client uses the real router and handlers", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-embedded-"))
   const database = Flag.OPENCODE_DB
   Flag.OPENCODE_DB = join(directory, "opencode.sqlite")
-  const { AbsolutePath, Agent, Location, Model, OpenCode, Prompt, Session, Tool } = await import(
-    "../src/effect-embedded"
-  )
+  const { AbsolutePath, Agent, Location, Model, OpenCode, Prompt, Provider, Session, Tool } = await import("../src")
   const sessionID = Session.ID.make(`ses_embedded_${crypto.randomUUID()}`)
-  const model = Model.Ref.make({ id: "embedded", providerID: "test" })
+  const model = Model.Ref.make({ id: Model.ID.make("embedded"), providerID: Provider.ID.make("test") })
 
   try {
     const program = Effect.gen(function* () {
@@ -37,7 +35,7 @@ test("embedded client uses the real router and handlers", async () => {
       const page = yield* opencode.sessions.list({ directory: AbsolutePath.make(directory) })
       const admitted = yield* opencode.sessions.prompt({
         sessionID,
-        prompt: new Prompt({ text: "Do not run" }),
+        prompt: Prompt.make({ text: "Do not run" }),
         resume: false,
       })
       const context = yield* opencode.sessions.context({ sessionID })
@@ -64,7 +62,7 @@ test("embedded client is available as a Layer service", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-embedded-layer-"))
   const database = Flag.OPENCODE_DB
   Flag.OPENCODE_DB = join(directory, "opencode.sqlite")
-  const { AbsolutePath, Location, OpenCode, Session } = await import("../src/effect-embedded")
+  const { AbsolutePath, Location, OpenCode, Session } = await import("../src")
   const sessionID = Session.ID.make(`ses_embedded_${crypto.randomUUID()}`)
 
   try {

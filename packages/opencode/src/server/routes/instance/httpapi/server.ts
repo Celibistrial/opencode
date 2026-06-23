@@ -54,6 +54,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/layer-node-platform"
 import { EventV2 } from "@opencode-ai/core/event"
+import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Npm } from "@opencode-ai/core/npm"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -280,6 +281,7 @@ export function createRoutes(
       HttpServer.layerServices,
     ]),
     Layer.provide(LayerNode.buildLayer(app)),
+    Layer.provide(ApplicationTools.layer),
     Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
     Layer.provideMerge(Observability.layer),
   )

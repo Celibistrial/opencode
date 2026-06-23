@@ -1,4 +1,4 @@
-import { Effect, Layer, LayerMap } from "effect"
+import { Context, Data, Effect, Layer, LayerMap, Scope } from "effect"
 import { Location } from "./location"
 import { Policy } from "./policy"
 import { Config } from "./config"
@@ -48,12 +48,48 @@ import { SessionRunnerModel } from "./session/runner/model"
 import { SystemContextBuiltIns } from "./system-context/builtins"
 import { FetchHttpClient } from "effect/unstable/http"
 
-export class LocationServiceMap extends LayerMap.Service<LocationServiceMap>()("@opencode/example/LocationServiceMap", {
-  lookup: (ref: Location.Ref) => {
+class LocationRefKey extends Data.Class<{
+  readonly directory: Location.Ref["directory"]
+  readonly workspaceID: Location.Ref["workspaceID"] | null
+}> {}
+
+const locationRefKey = (ref: Location.Ref) =>
+  new LocationRefKey({ directory: ref.directory, workspaceID: ref.workspaceID ?? null })
+
+const locationServiceDependencies = [
+  Project.defaultLayer,
+  EventV2.defaultLayer,
+  Credential.defaultLayer,
+  Npm.defaultLayer,
+  ModelsDev.defaultLayer,
+  FSUtil.defaultLayer,
+  Git.defaultLayer,
+  AppProcess.defaultLayer,
+  Global.defaultLayer,
+  Ripgrep.defaultLayer,
+  Database.defaultLayer,
+  ProjectDirectories.defaultLayer,
+  SessionStore.layer.pipe(Layer.provide(Database.defaultLayer)),
+  PermissionSaved.defaultLayer,
+  RepositoryCache.defaultLayer,
+  LLMClient.layer.pipe(Layer.provide(RequestExecutor.defaultLayer)),
+  FetchHttpClient.layer,
+  ToolOutputStore.defaultCleanupLayer,
+] as const
+
+class LocationServiceCache extends LayerMap.Service<LocationServiceCache>()("@opencode/example/LocationServiceCache", {
+  lookup: (ref: ReturnType<typeof locationRefKey>) => {
+    const locationRef = Location.Ref.make({
+      directory: ref.directory,
+      ...(ref.workspaceID === null ? {} : { workspaceID: ref.workspaceID }),
+    })
     const boot = Layer.effectDiscard(
-      Effect.logInfo("booting location services", { directory: ref.directory, workspaceID: ref.workspaceID }),
+      Effect.logInfo("booting location services", {
+        directory: locationRef.directory,
+        workspaceID: locationRef.workspaceID,
+      }),
     )
-    const location = Location.layer(ref)
+    const location = Location.layer(locationRef)
     const systemContext = SystemContextBuiltIns.locationLayer
     const base = Layer.mergeAll(
       location,
@@ -123,25 +159,45 @@ export class LocationServiceMap extends LayerMap.Service<LocationServiceMap>()("
     ).pipe(Layer.fresh)
   },
   idleTimeToLive: "60 minutes",
-  dependencies: [
-    Project.defaultLayer,
-    EventV2.defaultLayer,
-    Credential.defaultLayer,
-    Npm.defaultLayer,
-    ModelsDev.defaultLayer,
-    FSUtil.defaultLayer,
-    Git.defaultLayer,
-    AppProcess.defaultLayer,
-    Global.defaultLayer,
-    Ripgrep.defaultLayer,
-    Database.defaultLayer,
-    ProjectDirectories.defaultLayer,
-    SessionStore.layer.pipe(Layer.provide(Database.defaultLayer)),
-    PermissionSaved.defaultLayer,
-    RepositoryCache.defaultLayer,
-    LLMClient.layer.pipe(Layer.provide(RequestExecutor.defaultLayer)),
-    FetchHttpClient.layer,
-    ToolOutputStore.defaultCleanupLayer,
-    ApplicationTools.layer,
-  ],
+  dependencies: [...locationServiceDependencies, ApplicationTools.layer],
 }) {}
+
+type LocationServices = Layer.Success<ReturnType<typeof LocationServiceCache.get>>
+
+export interface LocationServiceMapService {
+  readonly get: (ref: Location.Ref) => Layer.Layer<LocationServices>
+  readonly contextEffect: (ref: Location.Ref) => Effect.Effect<Context.Context<LocationServices>, never, Scope.Scope>
+  readonly invalidate: (ref: Location.Ref) => Effect.Effect<void>
+}
+
+const locationServiceMapLayer = <E, R>(
+  service: Context.Service<LocationServiceMap, LocationServiceMapService>,
+  cache: Layer.Layer<LocationServiceCache, E, R>,
+) =>
+  Layer.effect(
+    service,
+    Effect.map(LocationServiceCache, (locations) =>
+      service.of({
+        get: (ref) => locations.get(locationRefKey(ref)),
+        contextEffect: (ref) => locations.contextEffect(locationRefKey(ref)),
+        invalidate: (ref) => locations.invalidate(locationRefKey(ref)),
+      }),
+    ),
+  ).pipe(Layer.provide(cache))
+
+export class LocationServiceMap extends Context.Service<LocationServiceMap, LocationServiceMapService>()(
+  "@opencode/example/LocationServiceMap",
+) {
+  static readonly get = (ref: Location.Ref) =>
+    Layer.unwrap(Effect.map(LocationServiceMap, (locations) => locations.get(ref)))
+  static readonly contextEffect = (ref: Location.Ref) =>
+    Effect.flatMap(LocationServiceMap, (locations) => locations.contextEffect(ref))
+  static readonly invalidate = (ref: Location.Ref) =>
+    Effect.flatMap(LocationServiceMap, (locations) => locations.invalidate(ref))
+  static readonly layer: Layer.Layer<LocationServiceMap> = locationServiceMapLayer(this, LocationServiceCache.layer)
+  static readonly layerWithApplicationTools: Layer.Layer<LocationServiceMap, never, ApplicationTools.Service> =
+    locationServiceMapLayer(
+      this,
+      LocationServiceCache.layerNoDeps.pipe(Layer.provide(Layer.mergeAll(...locationServiceDependencies))),
+    )
+}

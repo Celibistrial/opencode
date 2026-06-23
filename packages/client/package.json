@@ -6,8 +6,7 @@
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
-    "./effect": "./src/effect.ts",
-    "./effect/embedded": "./src/effect-embedded.ts"
+    "./effect": "./src/effect.ts"
   },
   "scripts": {
     "generate": "bun run script/build.ts",
@@ -16,10 +15,8 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/core": "workspace:*",
-    "@opencode-ai/model": "workspace:*",
-    "@opencode-ai/protocol": "workspace:*",
-    "@opencode-ai/server": "workspace:*"
+    "@opencode-ai/schema": "workspace:*",
+    "@opencode-ai/protocol": "workspace:*"
   },
   "peerDependencies": {
     "effect": "4.0.0-beta.83"
