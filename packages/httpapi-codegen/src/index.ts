@@ -694,11 +694,13 @@ export function write(
 ): Effect.Effect<void, GenerationError | PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const paths = new Set<string>()
+    const normalizedPaths = new Set<string>()
     for (const file of output.files) {
       if (!isSafeOutputPath(file.path)) yield* new GenerationError({ reason: `Unsafe output path: ${file.path}` })
       const path = file.path.toLowerCase()
-      if (paths.has(path)) yield* new GenerationError({ reason: `Duplicate output path: ${file.path}` })
-      paths.add(path)
+      if (normalizedPaths.has(path)) yield* new GenerationError({ reason: `Duplicate output path: ${file.path}` })
+      normalizedPaths.add(path)
+      paths.add(file.path)
     }
     const fs = yield* FileSystem.FileSystem
     yield* fs.makeDirectory(directory, { recursive: true })
@@ -713,7 +715,7 @@ export function write(
       yield* new GenerationError({ reason: `Invalid generated file manifest: ${manifest}` })
     }
     yield* Effect.forEach(
-      previous.filter((path) => !output.files.some((file) => file.path === path)),
+      previous.filter((path) => !paths.has(path)),
       (path) => fs.remove(join(directory, path), { force: true }),
       { concurrency: 8, discard: true },
     )
@@ -972,82 +974,73 @@ function streamDataSchema(schema: Extract<HttpApiSchema.StreamSchema, { readonly
 function renderGroup(group: Group, groupIndex: number) {
   const slots: Array<Slot> = []
   const adapters: Array<string> = []
-  const endpointSources = group.endpoints.map(
-    (
-      {
-        endpoint,
-        errors,
-        headers: endpointHeaders,
-        params: endpointParams,
-        payloads: endpointPayloads,
-        query: endpointQuery,
-        successes,
-      },
-      endpointIndex,
-    ) => {
-      const prefix = `Endpoint${endpointIndex}`
-      const params = addSlot(endpointParams, `${prefix}Params`)
-      const query = addSlot(endpointQuery, `${prefix}Query`)
-      const headers = addSlot(endpointHeaders, `${prefix}Headers`)
-      const payloads = endpointPayloads.map((schema, index) => addSlot(schema, `${prefix}Payload${index}`)!)
-      const success = renderSuccess(successes[0], `${prefix}Success`)
-      const errorSlots = errors.map((schema, index) => addSlot(schema, `${prefix}Error${index}`)!)
-      const options = [
-        params === undefined ? undefined : `params: ${params.name}`,
-        query === undefined ? undefined : `query: ${query.name}`,
-        headers === undefined ? undefined : `headers: ${headers.name}`,
-        payloads.length === 0
-          ? undefined
-          : `payload: ${payloads.length === 1 ? payloads[0].name : `[${payloads.map((slot) => slot.name).join(", ")}]`}`,
-        `success: ${success.source}`,
-        errorSlots.length === 0
-          ? undefined
-          : `error: ${errorSlots.length === 1 ? errorSlots[0].name : `[${errorSlots.map((slot) => slot.name).join(", ")}]`}`,
-      ].filter((option): option is string => option !== undefined)
-      const operation = group.endpoints[endpointIndex]
-      if (operation === undefined) {
-        throw new GenerationError({ reason: `Missing operation: ${group.identifier}.${endpoint.name}` })
-      }
-      const schemaBySource = { params, query, headers, payload: payloads[0] }
-      const inputType = operation.input
-        .map((field) => {
-          const slot = schemaBySource[field.source]
-          if (slot === undefined) {
-            throw new GenerationError({ reason: `Missing input schema: ${group.identifier}.${endpoint.name}` })
-          }
-          return `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: (typeof ${slot.name}.Type)[${JSON.stringify(field.name)}]`
-        })
-        .join("; ")
-      const argument =
-        operation.operation.inputMode === "none"
-          ? ""
-          : `input${operation.operation.inputMode === "optional" ? "?" : ""}: ${prefix}Input`
-      const request = (["params", "query", "headers", "payload"] as const)
-        .flatMap((source) => {
-          const slot = schemaBySource[source]
-          if (slot === undefined) return []
-          const fields = operation.input
-            .filter((field) => field.source === source)
-            .map(
-              (field) =>
-                `${JSON.stringify(field.name)}: input${operation.operation.inputMode === "optional" ? "?." : ""}[${JSON.stringify(field.name)}]`,
-            )
-          return [`${source}: { ${fields.join(", ")} }`]
-        })
-        .join(", ")
-      const declared = [...errorSlots, ...(success.streamError === undefined ? [] : [success.streamError])]
-      const declaredSchema =
-        declared.length === 0 ? "Schema.Never" : `Schema.Union([${declared.map((slot) => slot.name).join(", ")}])`
-      const rawCall = `raw[${JSON.stringify(endpoint.name)}]({ ${request} })`
-      const mapped = `${rawCall}.pipe(Effect.mapError(map${prefix}Error)${operation.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
-      const inputDeclaration =
-        operation.operation.inputMode === "none" ? "" : `type ${prefix}Input = { ${inputType} }\n`
-      adapters.push(
-        `${inputDeclaration}const ${prefix}DeclaredError = ${declaredSchema}\nconst map${prefix}Error = (error: unknown) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : Schema.is(${prefix}DeclaredError)(error) ? error : new ClientError({ cause: error })\nconst ${prefix} = (raw: RawGroup) => (${argument}) => ${operation.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(map${prefix}Error), Effect.map((stream) => stream.pipe(Stream.mapError(map${prefix}Error)))))` : mapped}`,
-      )
-      return `HttpApiEndpoint.make(${JSON.stringify(endpoint.method)})(${JSON.stringify(endpoint.name)}, ${JSON.stringify(endpoint.path)}, { ${options.join(", ")} })`
-    },
-  )
+  const endpointSources = group.endpoints.map((operation, endpointIndex) => {
+    const {
+      endpoint,
+      errors,
+      headers: endpointHeaders,
+      params: endpointParams,
+      payloads: endpointPayloads,
+      query: endpointQuery,
+      successes,
+    } = operation
+    const prefix = `Endpoint${endpointIndex}`
+    const params = addSlot(endpointParams, `${prefix}Params`)
+    const query = addSlot(endpointQuery, `${prefix}Query`)
+    const headers = addSlot(endpointHeaders, `${prefix}Headers`)
+    const payloads = endpointPayloads.map((schema, index) => addSlot(schema, `${prefix}Payload${index}`)!)
+    const success = renderSuccess(successes[0], `${prefix}Success`)
+    const errorSlots = errors.map((schema, index) => addSlot(schema, `${prefix}Error${index}`)!)
+    const options = [
+      params === undefined ? undefined : `params: ${params.name}`,
+      query === undefined ? undefined : `query: ${query.name}`,
+      headers === undefined ? undefined : `headers: ${headers.name}`,
+      payloads.length === 0
+        ? undefined
+        : `payload: ${payloads.length === 1 ? payloads[0].name : `[${payloads.map((slot) => slot.name).join(", ")}]`}`,
+      `success: ${success.source}`,
+      errorSlots.length === 0
+        ? undefined
+        : `error: ${errorSlots.length === 1 ? errorSlots[0].name : `[${errorSlots.map((slot) => slot.name).join(", ")}]`}`,
+    ].filter((option): option is string => option !== undefined)
+    const schemaBySource = { params, query, headers, payload: payloads[0] }
+    const inputType = operation.input
+      .map((field) => {
+        const slot = schemaBySource[field.source]
+        if (slot === undefined) {
+          throw new GenerationError({ reason: `Missing input schema: ${group.identifier}.${endpoint.name}` })
+        }
+        return `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: (typeof ${slot.name}.Type)[${JSON.stringify(field.name)}]`
+      })
+      .join("; ")
+    const argument =
+      operation.operation.inputMode === "none"
+        ? ""
+        : `input${operation.operation.inputMode === "optional" ? "?" : ""}: ${prefix}Input`
+    const request = (["params", "query", "headers", "payload"] as const)
+      .flatMap((source) => {
+        const slot = schemaBySource[source]
+        if (slot === undefined) return []
+        const fields = operation.input
+          .filter((field) => field.source === source)
+          .map(
+            (field) =>
+              `${JSON.stringify(field.name)}: input${operation.operation.inputMode === "optional" ? "?." : ""}[${JSON.stringify(field.name)}]`,
+          )
+        return [`${source}: { ${fields.join(", ")} }`]
+      })
+      .join(", ")
+    const declared = [...errorSlots, ...(success.streamError === undefined ? [] : [success.streamError])]
+    const declaredSchema =
+      declared.length === 0 ? "Schema.Never" : `Schema.Union([${declared.map((slot) => slot.name).join(", ")}])`
+    const rawCall = `raw[${JSON.stringify(endpoint.name)}]({ ${request} })`
+    const mapped = `${rawCall}.pipe(Effect.mapError(map${prefix}Error)${operation.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
+    const inputDeclaration = operation.operation.inputMode === "none" ? "" : `type ${prefix}Input = { ${inputType} }\n`
+    adapters.push(
+      `${inputDeclaration}const ${prefix}DeclaredError = ${declaredSchema}\nconst map${prefix}Error = (error: unknown) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : Schema.is(${prefix}DeclaredError)(error) ? error : new ClientError({ cause: error })\nconst ${prefix} = (raw: RawGroup) => (${argument}) => ${operation.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(map${prefix}Error), Effect.map((stream) => stream.pipe(Stream.mapError(map${prefix}Error)))))` : mapped}`,
+    )
+    return `HttpApiEndpoint.make(${JSON.stringify(endpoint.method)})(${JSON.stringify(endpoint.name)}, ${JSON.stringify(endpoint.path)}, { ${options.join(", ")} })`
+  })
 
   function addSlot(schema: Schema.Top | undefined, name: string) {
     if (schema === undefined) return undefined

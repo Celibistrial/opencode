@@ -5,8 +5,9 @@ import { Effect } from "effect"
 import { HttpApi } from "effect/unstable/httpapi"
 import { fileURLToPath } from "url"
 
-const Api = HttpApi.make("opencode-client").add(SessionGroup)
-const contract = compile(Api, { groupNames: { "server.session": "sessions" } })
+const contract = compile(HttpApi.make("opencode-client").add(SessionGroup), {
+  groupNames: { "server.session": "sessions" },
+})
 
 await Effect.runPromise(
   Effect.all(
