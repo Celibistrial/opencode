@@ -2,11 +2,11 @@
 // authoritative HttpApi into a protocol leaf so this network entrypoint depends on Effect + protocol, not Core +
 // server. Preserve these datatype exports when replacing their Core backing modules so callers do not migrate again.
 export * from "./generated-effect/index"
-export { AgentV2 } from "@opencode-ai/core/agent"
+export { AgentV2 as Agent } from "@opencode-ai/core/agent"
 export { Location } from "@opencode-ai/core/location"
-export { ModelV2 } from "@opencode-ai/core/model"
+export { ModelV2 as Model } from "@opencode-ai/core/model"
 export { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
-export { SessionV2 } from "@opencode-ai/core/session"
+export { SessionV2 as Session } from "@opencode-ai/core/session"
 export { SessionInput } from "@opencode-ai/core/session/input"
 export { SessionMessage } from "@opencode-ai/core/session/message"
 export { Prompt } from "@opencode-ai/core/session/prompt"

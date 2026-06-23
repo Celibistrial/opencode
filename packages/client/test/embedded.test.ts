@@ -9,11 +9,11 @@ test("embedded client uses the real router and handlers", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-embedded-"))
   const database = Flag.OPENCODE_DB
   Flag.OPENCODE_DB = join(directory, "opencode.sqlite")
-  const { AbsolutePath, AgentV2, Location, ModelV2, OpenCode, Prompt, SessionV2, Tool } = await import(
+  const { AbsolutePath, Agent, Location, Model, OpenCode, Prompt, Session, Tool } = await import(
     "../src/effect-embedded"
   )
-  const sessionID = SessionV2.ID.make(`ses_embedded_${crypto.randomUUID()}`)
-  const model = ModelV2.Ref.make({ id: "embedded", providerID: "test" })
+  const sessionID = Session.ID.make(`ses_embedded_${crypto.randomUUID()}`)
+  const model = Model.Ref.make({ id: "embedded", providerID: "test" })
 
   try {
     const program = Effect.gen(function* () {
@@ -29,7 +29,7 @@ test("embedded client uses the real router and handlers", async () => {
 
       const created = yield* opencode.sessions.create({
         id: sessionID,
-        agent: AgentV2.ID.make("build"),
+        agent: Agent.ID.make("build"),
         location: Location.Ref.make({ directory: AbsolutePath.make(directory) }),
       })
       yield* opencode.sessions.switchModel({ sessionID, model })
@@ -42,7 +42,7 @@ test("embedded client uses the real router and handlers", async () => {
       })
       const context = yield* opencode.sessions.context({ sessionID })
       const missing = yield* Effect.flip(
-        opencode.sessions.get({ sessionID: SessionV2.ID.make(`ses_missing_${crypto.randomUUID()}`) }),
+        opencode.sessions.get({ sessionID: Session.ID.make(`ses_missing_${crypto.randomUUID()}`) }),
       )
 
       expect(created.id).toBe(sessionID)
@@ -64,8 +64,8 @@ test("embedded client is available as a Layer service", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-embedded-layer-"))
   const database = Flag.OPENCODE_DB
   Flag.OPENCODE_DB = join(directory, "opencode.sqlite")
-  const { AbsolutePath, Location, OpenCode, SessionV2 } = await import("../src/effect-embedded")
-  const sessionID = SessionV2.ID.make(`ses_embedded_${crypto.randomUUID()}`)
+  const { AbsolutePath, Location, OpenCode, Session } = await import("../src/effect-embedded")
+  const sessionID = Session.ID.make(`ses_embedded_${crypto.randomUUID()}`)
 
   try {
     const created = await Effect.runPromise(

@@ -53,12 +53,12 @@ export const layer = Layer.effect(Service, create())
 export { ClientError } from "./generated-effect/index"
 export { Tool } from "@opencode-ai/core/public/tool"
 export {
-  AgentV2,
+  Agent,
   Location,
-  ModelV2,
+  Model,
   AbsolutePath,
   RelativePath,
-  SessionV2,
+  Session,
   SessionInput,
   SessionMessage,
   Prompt,
