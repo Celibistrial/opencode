@@ -44,11 +44,11 @@ export const create = Effect.fn("OpenCode.create")(function* () {
   }
 })
 
-export interface Interface extends Effect.Success<ReturnType<typeof create>> {}
+export type Interface = Effect.Success<ReturnType<typeof create>>
 
 export class Service extends Context.Service<Service, Interface>()("@opencode-ai/client/OpenCode") {}
 
-export const layer = Layer.effect(Service, create().pipe(Effect.map(Service.of)))
+export const layer = Layer.effect(Service, create())
 
 export { ClientError } from "./generated-effect/index"
 export { Tool } from "@opencode-ai/core/public/tool"
