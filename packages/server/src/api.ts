@@ -3,7 +3,7 @@ import { SchemaErrorMiddleware } from "./middleware/schema-error"
 import { MessageGroup } from "./groups/message"
 import { ModelGroup } from "./groups/model"
 import { ProviderGroup } from "./groups/provider"
-import { SessionsGroup } from "./groups/session"
+import { SessionGroup } from "./groups/session"
 import { PermissionGroup } from "./groups/permission"
 import { FileSystemGroup } from "./groups/fs"
 import { CommandGroup } from "./groups/command"
@@ -24,7 +24,7 @@ export const Api = HttpApi.make("server")
   .add(HealthGroup)
   .add(LocationGroup)
   .add(AgentGroup)
-  .add(SessionsGroup)
+  .add(SessionGroup)
   .add(MessageGroup)
   .add(ModelGroup)
   .add(ProviderGroup)

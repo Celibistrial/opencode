@@ -13,7 +13,7 @@ import {
   SessionsSwitchModel,
 } from "./session-endpoints"
 
-export const SessionsGroup = HttpApiGroup.make("sessions")
+export const SessionGroup = HttpApiGroup.make("sessions")
   .add(SessionsList)
   .add(SessionsCreate)
   .add(SessionsGet.middleware(SessionLocationMiddleware))

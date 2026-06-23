@@ -107,7 +107,8 @@ export const SessionsList = HttpApiEndpoint.get("list", "/api/session", {
   OpenApi.annotations({
     identifier: "v2.session.list",
     summary: "List sessions",
-    description: "Retrieve an ordered page of sessions.",
+    description:
+      "Retrieve sessions in the requested order. Items keep that order across pages; use cursor.next or cursor.previous to move through the ordered list.",
   }),
 )
 
@@ -148,7 +149,7 @@ export const SessionsSwitchAgent = HttpApiEndpoint.post("switchAgent", "/api/ses
   OpenApi.annotations({
     identifier: "v2.session.switchAgent",
     summary: "Switch session agent",
-    description: "Switch the agent used by subsequent session activity.",
+    description: "Switch the agent used by subsequent provider turns.",
   }),
 )
 
@@ -161,7 +162,7 @@ export const SessionsSwitchModel = HttpApiEndpoint.post("switchModel", "/api/ses
   OpenApi.annotations({
     identifier: "v2.session.switchModel",
     summary: "Switch session model",
-    description: "Switch the model used by subsequent session activity.",
+    description: "Switch the model used by subsequent provider turns.",
   }),
 )
 
@@ -178,7 +179,7 @@ export const SessionsPrompt = HttpApiEndpoint.post("prompt", "/api/session/:sess
 }).annotateMerge(
   OpenApi.annotations({
     identifier: "v2.session.prompt",
-    summary: "Send prompt",
-    description: "Durably admit one session input and schedule execution unless resume is false.",
+    summary: "Send message",
+    description: "Durably admit one session input and schedule agent-loop execution unless resume is false.",
   }),
 )
