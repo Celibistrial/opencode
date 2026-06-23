@@ -4,7 +4,7 @@ import { PermissionSaved } from "@opencode-ai/core/permission/saved"
 import { PtyTicket } from "@opencode-ai/core/pty/ticket"
 import { Layer } from "effect"
 import { layer as locationLayer } from "./groups/location"
-import { sessionLocationLayer } from "./middleware/session-location"
+import { sessionLocationLayer, sessionLocationServicesLayer } from "./middleware/session-location"
 import { MessageHandler } from "./handlers/message"
 import { ModelHandler } from "./handlers/model"
 import { ProviderHandler } from "./handlers/provider"
@@ -47,6 +47,7 @@ export const handlers = Layer.mergeAll(
   ProjectCopyHandler,
 ).pipe(
   Layer.provide(sessionLocationLayer),
+  Layer.provide(sessionLocationServicesLayer),
   Layer.provide(locationLayer),
   Layer.provide(SessionV2.defaultLayer),
   Layer.provide(SessionExecutionLocal.defaultLayer),

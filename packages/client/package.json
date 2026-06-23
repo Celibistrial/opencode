@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "@opencode-ai/core": "workspace:*",
+    "@opencode-ai/model": "workspace:*",
+    "@opencode-ai/protocol": "workspace:*",
     "@opencode-ai/server": "workspace:*"
   },
   "peerDependencies": {

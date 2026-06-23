@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect"
 import { Sse } from "effect/unstable/encoding"
 import { HttpClientError } from "effect/unstable/http"
 import { HttpApi, HttpApiClient } from "effect/unstable/httpapi"
-import { SessionGroup } from "@opencode-ai/server/groups/session"
+import { SessionGroup } from "@opencode-ai/protocol/session"
 import { ClientError } from "./client-error"
 
 const Api = HttpApi.make("generated").add(SessionGroup)

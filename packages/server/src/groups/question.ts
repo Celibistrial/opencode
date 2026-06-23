@@ -4,7 +4,7 @@ import { SessionV2 } from "@opencode-ai/core/session"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { QuestionNotFoundError, SessionNotFoundError } from "../errors"
-import { SessionLocationMiddleware } from "../middleware/session-location"
+import { SessionLocationServicesMiddleware } from "../middleware/session-location"
 import { LocationQuery, locationQueryOpenApi, LocationMiddleware } from "./location"
 
 export const QuestionGroup = HttpApiGroup.make("server.question")
@@ -30,7 +30,7 @@ export const QuestionGroup = HttpApiGroup.make("server.question")
       success: Schema.Struct({ data: Schema.Array(QuestionV2.Request) }),
       error: SessionNotFoundError,
     })
-      .middleware(SessionLocationMiddleware)
+      .middleware(SessionLocationServicesMiddleware)
       .annotateMerge(
         OpenApi.annotations({
           identifier: "v2.session.question.list",
@@ -46,7 +46,7 @@ export const QuestionGroup = HttpApiGroup.make("server.question")
       success: HttpApiSchema.NoContent,
       error: [SessionNotFoundError, QuestionNotFoundError],
     })
-      .middleware(SessionLocationMiddleware)
+      .middleware(SessionLocationServicesMiddleware)
       .annotateMerge(
         OpenApi.annotations({
           identifier: "v2.session.question.reply",
@@ -61,7 +61,7 @@ export const QuestionGroup = HttpApiGroup.make("server.question")
       success: HttpApiSchema.NoContent,
       error: [SessionNotFoundError, QuestionNotFoundError],
     })
-      .middleware(SessionLocationMiddleware)
+      .middleware(SessionLocationServicesMiddleware)
       .annotateMerge(
         OpenApi.annotations({
           identifier: "v2.session.question.reject",

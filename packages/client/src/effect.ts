@@ -1,12 +1,11 @@
-// TODO: Before stabilization, move shared structural domain schemas into a lightweight model leaf and the
-// authoritative HttpApi into a protocol leaf so this network entrypoint depends on Effect + protocol, not Core +
-// server. Preserve these datatype exports when replacing their Core backing modules so callers do not migrate again.
+// TODO: Keep additional network capabilities inside Model and Protocol as the client grows; /effect must never import
+// Core or Server. Preserve these datatype exports so internal model reorganizations do not require caller migrations.
 export * from "./generated-effect/index"
-export { AgentV2 as Agent } from "@opencode-ai/core/agent"
-export { Location } from "@opencode-ai/core/location"
-export { ModelV2 as Model } from "@opencode-ai/core/model"
-export { AbsolutePath, RelativePath } from "@opencode-ai/core/schema"
-export { SessionV2 as Session } from "@opencode-ai/core/session"
-export { SessionInput } from "@opencode-ai/core/session/input"
-export { SessionMessage } from "@opencode-ai/core/session/message"
-export { Prompt } from "@opencode-ai/core/session/prompt"
+export { Agent } from "@opencode-ai/model/agent"
+export { Location } from "@opencode-ai/model/location"
+export { Model } from "@opencode-ai/model/model"
+export { AbsolutePath, RelativePath } from "@opencode-ai/model/schema"
+export { Session } from "@opencode-ai/model/session"
+export { SessionInput } from "@opencode-ai/model/session-input"
+export { SessionMessage } from "@opencode-ai/model/session-message"
+export { Prompt } from "@opencode-ai/model/prompt"

@@ -10,9 +10,9 @@ Private generation target for clients derived directly from OpenCode's authorita
 
 The generated surface contains `sessions.list`, `create`, `get`, `switchAgent`, `switchModel`, `prompt`, `compact`, `wait`, and `context`. The server and generator consume the exact same hosted `SessionGroup`. Run `bun run generate` after changing that contract and `bun run check:generated` to detect committed-output drift.
 
-During beta, the Effect entrypoints use canonical decoded values such as `Session.ID`, `Location.Ref`, and `Prompt`; the network entrypoint therefore accepts the authoritative group's heavy Core/server import graph. These datatypes are re-exported from both Effect entrypoints so callers do not depend on their current Core module locations or internal versioned names. The Promise root remains structural and has no Core or Effect runtime dependency.
+The Effect entrypoints use canonical decoded values such as `Session.ID`, `Location.Ref`, and `Prompt`. These datatypes come from the lightweight `@opencode-ai/model` package and are re-exported from both Effect entrypoints so callers depend only on the client surface. The authoritative `SessionGroup` lives in `@opencode-ai/protocol`; Server hosts that exact group and adapts it to Core.
 
-The intended stable design extracts shared structural domain schemas into a lightweight model leaf and the authoritative `HttpApi` into a lightweight protocol leaf. Core and Protocol reuse the model; Server hosts Protocol and adapts it to Core; `/effect` depends only on Effect and Protocol; `/effect/embedded` retains Core and Server internally. This preserves the public root, `/effect`, and `/effect/embedded` entrypoints. The migration checklist is recorded in `CONTEXT.md` under "Deferred client contract cleanup."
+The Promise root remains structural and has no Core or Effect runtime dependency. `/effect` depends only on Effect, Model, and Protocol and is browser-bundle safe. `/effect/embedded` intentionally retains Core and Server internally. Bundle-boundary tests enforce these import graphs while preserving the public root, `/effect`, and `/effect/embedded` entrypoints.
 
 Until that extraction, Effect consumers construct canonical decoded inputs:
 

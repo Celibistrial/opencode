@@ -2,10 +2,9 @@ export * as SessionInput from "./input"
 
 import { and, asc, eq, isNull, lte } from "drizzle-orm"
 import { DateTime, Effect, Schema } from "effect"
+import { SessionInput as ModelSessionInput } from "@opencode-ai/model/session-input"
 import type { Database } from "../database/database"
 import type { EventV2 } from "../event"
-import { NonNegativeInt } from "../schema"
-import { V2Schema } from "../v2-schema"
 import { SessionEvent } from "./event"
 import { SessionMessage } from "./message"
 import { Prompt } from "./prompt"
@@ -14,18 +13,11 @@ import { SessionInputTable, SessionMessageTable } from "./sql"
 
 type DatabaseService = Database.Interface["db"]
 
-export const Delivery = Schema.Literals(["steer", "queue"])
+export const Delivery = ModelSessionInput.Delivery
 export type Delivery = typeof Delivery.Type
 
-export class Admitted extends Schema.Class<Admitted>("SessionInput.Admitted")({
-  admittedSeq: NonNegativeInt,
-  id: SessionMessage.ID,
-  sessionID: SessionSchema.ID,
-  prompt: Prompt,
-  delivery: Delivery,
-  timeCreated: V2Schema.DateTimeUtcFromMillis,
-  promotedSeq: NonNegativeInt.pipe(Schema.optional),
-}) {}
+export const Admitted = ModelSessionInput.Admitted
+export type Admitted = ModelSessionInput.Admitted
 
 const decodePrompt = Schema.decodeUnknownSync(Prompt)
 const encodePrompt = Schema.encodeSync(Prompt)

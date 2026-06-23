@@ -1,20 +1,20 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/server",
-  "version": "1.17.9",
+  "name": "@opencode-ai/protocol",
   "private": true,
   "type": "module",
   "license": "MIT",
   "exports": {
-    "./*": "./src/*.ts"
+    "./errors": "./src/errors.ts",
+    "./session": "./src/session.ts",
+    "./session-cursor": "./src/session-cursor.ts",
+    "./middleware/session-location": "./src/middleware/session-location.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/core": "workspace:*",
-    "@opencode-ai/protocol": "workspace:*",
-    "drizzle-orm": "catalog:",
+    "@opencode-ai/model": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

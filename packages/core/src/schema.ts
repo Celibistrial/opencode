@@ -1,5 +1,14 @@
-import { Option, Schema, SchemaGetter } from "effect"
+import { Schema } from "effect"
+import {
+  AbsolutePath as ModelAbsolutePath,
+  NonNegativeInt,
+  optionalOmitUndefined,
+  PositiveInt,
+  RelativePath as ModelRelativePath,
+} from "@opencode-ai/model/schema"
 import { Hash } from "./util/hash"
+
+export { NonNegativeInt, optionalOmitUndefined, PositiveInt }
 
 export type ExternalID = {
   readonly namespace: string
@@ -12,36 +21,10 @@ export const externalID = (prefix: string, input: ExternalID) =>
 /**
  * Integer greater than zero.
  */
-export const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
-
-/**
- * Integer greater than or equal to zero.
- */
-export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
-
-/**
- * Relative file path (e.g., `src/components/Button.tsx`).
- */
-export const RelativePath = Schema.String.pipe(Schema.brand("RelativePath"))
-export type RelativePath = Schema.Schema.Type<typeof RelativePath>
-
-/**
- * Absolute file path (e.g., `/home/user/projects/myapp/src/main.ts`).
- */
-export const AbsolutePath = Schema.String.pipe(Schema.brand("AbsolutePath"))
-export type AbsolutePath = Schema.Schema.Type<typeof AbsolutePath>
-
-/**
- * Optional public JSON field that can hold explicit `undefined` on the type
- * side but encodes it as an omitted key, matching legacy `JSON.stringify`.
- */
-export const optionalOmitUndefined = <S extends Schema.Top>(schema: S) =>
-  Schema.optionalKey(schema).pipe(
-    Schema.decodeTo(Schema.optional(schema), {
-      decode: SchemaGetter.passthrough({ strict: false }),
-      encode: SchemaGetter.transformOptional(Option.filter((value) => value !== undefined)),
-    }),
-  )
+export const RelativePath = ModelRelativePath
+export type RelativePath = typeof RelativePath.Type
+export const AbsolutePath = ModelAbsolutePath
+export type AbsolutePath = typeof AbsolutePath.Type
 
 /**
  * Strip `readonly` from a nested type. Stand-in for `effect`'s `Types.DeepMutable`

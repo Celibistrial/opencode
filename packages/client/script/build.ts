@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { SessionGroup } from "@opencode-ai/server/groups/session"
+import { SessionGroup } from "@opencode-ai/protocol/session"
 import { compile, emitEffectImported, emitPromise, write } from "@opencode-ai/httpapi-codegen"
 import { Effect } from "effect"
 import { HttpApi } from "effect/unstable/httpapi"
@@ -15,7 +15,7 @@ await Effect.runPromise(
       write(emitPromise(contract), fileURLToPath(new URL("../src/generated", import.meta.url))),
       write(
         emitEffectImported(contract, {
-          module: "@opencode-ai/server/groups/session",
+          module: "@opencode-ai/protocol/session",
           group: "SessionGroup",
         }),
         fileURLToPath(new URL("../src/generated-effect", import.meta.url)),

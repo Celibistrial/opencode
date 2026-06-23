@@ -1,14 +1,13 @@
 import { Context, Effect, Layer, Schema } from "effect"
+import { Location as ModelLocation } from "@opencode-ai/model/location"
 import { Project } from "./project"
 import { AbsolutePath, optionalOmitUndefined } from "./schema"
 import { WorkspaceV2 } from "./workspace"
 
 export * as Location from "./location"
 
-export class Ref extends Schema.Class<Ref>("Location.Ref")({
-  directory: AbsolutePath,
-  workspaceID: Schema.optional(WorkspaceV2.ID).pipe(Schema.withConstructorDefault(Effect.succeed(undefined))),
-}) {}
+export const Ref = ModelLocation.Ref
+export type Ref = ModelLocation.Ref
 
 export class Info extends Schema.Class<Info>("Location.Info")({
   directory: AbsolutePath,

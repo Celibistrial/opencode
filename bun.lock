@@ -113,6 +113,8 @@
       "name": "@opencode-ai/client",
       "dependencies": {
         "@opencode-ai/core": "workspace:*",
+        "@opencode-ai/model": "workspace:*",
+        "@opencode-ai/protocol": "workspace:*",
         "@opencode-ai/server": "workspace:*",
       },
       "devDependencies": {
@@ -297,6 +299,7 @@
         "@opencode-ai/effect-drizzle-sqlite": "workspace:*",
         "@opencode-ai/effect-sqlite-node": "workspace:*",
         "@opencode-ai/llm": "workspace:*",
+        "@opencode-ai/model": "workspace:*",
         "@opencode-ai/plugin": "workspace:*",
         "@openrouter/ai-sdk-provider": "2.9.0",
         "@opentelemetry/api": "1.9.0",
@@ -527,6 +530,18 @@
         "@typescript/native-preview": "catalog:",
       },
     },
+    "packages/model": {
+      "name": "@opencode-ai/model",
+      "dependencies": {
+        "@noble/hashes": "catalog:",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
     "packages/opencode": {
       "name": "opencode",
       "version": "1.17.9",
@@ -684,6 +699,18 @@
         "@opentui/solid",
       ],
     },
+    "packages/protocol": {
+      "name": "@opencode-ai/protocol",
+      "dependencies": {
+        "@opencode-ai/model": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+      },
+    },
     "packages/script": {
       "name": "@opencode-ai/script",
       "dependencies": {
@@ -714,6 +741,7 @@
       "version": "1.17.9",
       "dependencies": {
         "@opencode-ai/core": "workspace:*",
+        "@opencode-ai/protocol": "workspace:*",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
       },
@@ -977,6 +1005,7 @@
     "@hono/zod-validator": "0.4.2",
     "@kobalte/core": "0.13.11",
     "@lydell/node-pty": "1.2.0-beta.12",
+    "@noble/hashes": "2.2.0",
     "@npmcli/arborist": "9.4.0",
     "@octokit/rest": "22.0.0",
     "@openauthjs/openauth": "0.0.0-20250322224806",
@@ -1839,7 +1868,11 @@
 
     "@opencode-ai/llm": ["@opencode-ai/llm@workspace:packages/llm"],
 
+    "@opencode-ai/model": ["@opencode-ai/model@workspace:packages/model"],
+
     "@opencode-ai/plugin": ["@opencode-ai/plugin@workspace:packages/plugin"],
+
+    "@opencode-ai/protocol": ["@opencode-ai/protocol@workspace:packages/protocol"],
 
     "@opencode-ai/script": ["@opencode-ai/script@workspace:packages/script"],
 
