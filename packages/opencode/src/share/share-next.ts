@@ -121,11 +121,16 @@ const layer = Layer.effect(
     const provider = yield* Provider.Service
     const session = yield* Session.Service
 
-    function sync(sessionID: SessionID, data: Data[]) {
+    function sync(sessionID: SessionID, build: Data[] | (() => Data[])) {
       return Effect.gen(function* () {
         if (disabled) return
         const share = yield* getCached(sessionID)
         if (!share) return
+
+        // Build the payload only after confirming the session is shared. For
+        // unshared sessions this skips the structuredClone the callers would
+        // otherwise perform on every event (see watchers below).
+        const data = typeof build === "function" ? build() : build
 
         const s = yield* InstanceState.get(state)
         const existing = s.queue.get(sessionID)
@@ -179,23 +184,25 @@ const layer = Layer.effect(
         yield* watch(Session.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.id, [{ type: "session", data: structuredClone(info) as SDK.Session }])
+            yield* sync(info.id, () => [{ type: "session", data: structuredClone(info) as SDK.Session }])
           }),
         )
         yield* watch(MessageV2.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) as SDK.Message }])
+            yield* sync(info.sessionID, () => [{ type: "message", data: structuredClone(info) as SDK.Message }])
             if (info.role !== "user") return
             const model = yield* provider.getModel(info.model.providerID, info.model.modelID)
             yield* sync(info.sessionID, [{ type: "model", data: [model] }])
           }),
         )
         yield* watch(MessageV2.Event.PartUpdated, (data) =>
-          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) as SDK.Part }]),
+          sync(data.part.sessionID, () => [{ type: "part", data: structuredClone(data.part) as SDK.Part }]),
         )
         yield* watch(Session.Event.Diff, (data) =>
-          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
+          sync(data.sessionID, () => [
+            { type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] },
+          ]),
         )
         yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
 
