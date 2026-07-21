@@ -30,6 +30,16 @@ import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 
+// Exit cleanly if the output pipe is closed (e.g. `opencode ... | head`)
+// instead of spinning by writing to a dead sink. Only EPIPE/closed-pipe is
+// handled; any other stream error is rethrown so real failures still surface.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(0)
+    throw err
+  })
+}
+
 const args = hideBin(process.argv)
 
 function show(out: string) {
