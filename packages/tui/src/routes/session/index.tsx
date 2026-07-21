@@ -1679,14 +1679,19 @@ function ReasoningHeader(props: {
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  // Trim once per text change and share the result between the visibility guard
+  // and the markdown source. The memo's identity check also skips feeding the
+  // renderable (and its re-parse) when a streaming flush leaves the trimmed
+  // text unchanged (e.g. trailing-whitespace-only deltas).
+  const content = createMemo(() => props.part.text.trim())
   return (
-    <Show when={props.part.text.trim()}>
+    <Show when={content()}>
       <box ref={(el: BoxRenderable) => alwaysSeparate.add(el)} paddingLeft={3} marginTop={1} flexShrink={0}>
         <markdown
           syntaxStyle={syntax()}
           streaming={true}
           internalBlockMode="top-level"
-          content={props.part.text.trim()}
+          content={content()}
           tableOptions={{ style: "grid" }}
           conceal={ctx.conceal()}
           fg={theme.markdownText}
