@@ -350,10 +350,10 @@ const layer = Layer.effect(
                 : value.providerMetadata,
             }))
 
-            const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
+            const recentParts = yield* MessageV2.parts(ctx.assistantMessage.id, { last: DOOM_LOOP_THRESHOLD }).pipe(
               Effect.provideService(Database.Service, database),
             )
-            const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            const inputJSON = JSON.stringify(input)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||
@@ -362,7 +362,7 @@ const layer = Layer.effect(
                   part.type === "tool" &&
                   part.tool === value.name &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(input),
+                  JSON.stringify(part.state.input) === inputJSON,
               )
             ) {
               return
