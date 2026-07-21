@@ -322,7 +322,14 @@ const layer = Layer.effectDiscard(
         const messageID = event.data.part.messageID
         const sessionID = event.data.part.sessionID
         const data = partData(event.data.part)
-        const row = yield* db.select().from(PartTable).where(eq(PartTable.id, id)).get().pipe(Effect.orDie)
+        // The prior row is only read to reverse previously-accounted usage, and usage()
+        // only exists on "step-finish" parts. A part's type is fixed at creation, so a
+        // non-step-finish update can never have prior usage to reverse — skip the wasted
+        // SELECT + JSON.parse of the previous full part on every streaming chunk.
+        const row =
+          event.data.part.type === "step-finish"
+            ? yield* db.select().from(PartTable).where(eq(PartTable.id, id)).get().pipe(Effect.orDie)
+            : undefined
         yield* db
           .insert(PartTable)
           .values({ id, message_id: messageID, session_id: sessionID, time_created: event.data.time, data })
