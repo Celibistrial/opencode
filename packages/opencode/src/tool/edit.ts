@@ -134,14 +134,9 @@ export const EditTool = Tool.define(
               const desiredBom = source.bom || next.bom
               contentNew = next.text
 
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
-              )
+              // Normalize the old content once and reuse it for any diff below.
+              const normalizedOld = normalizeLineEndings(contentOld)
+              diff = trimDiff(createTwoFilesPatch(filePath, filePath, normalizedOld, normalizeLineEndings(contentNew)))
               yield* ctx.ask({
                 permission: "edit",
                 patterns: [path.relative(instance.worktree, filePath)],
@@ -154,21 +149,18 @@ export const EditTool = Tool.define(
 
               yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
               if (yield* format.file(filePath)) {
-                contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
+                const formatted = yield* Bom.syncFile(afs, filePath, desiredBom)
+                // Only recompute the diff when formatting actually changed the content.
+                if (formatted !== contentNew) {
+                  contentNew = formatted
+                  diff = trimDiff(createTwoFilesPatch(filePath, filePath, normalizedOld, normalizeLineEndings(contentNew)))
+                }
               }
               yield* events.publish(FileSystem.Event.Edited, { file: filePath })
               yield* events.publish(Watcher.Event.Updated, {
                 file: filePath,
                 event: "change",
               })
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
-              )
             }).pipe(Effect.orDie),
           )
 
