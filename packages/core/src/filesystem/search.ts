@@ -32,6 +32,7 @@ export const ripgrepLayer = Layer.effect(
       directories: [] as string[],
     }
     const directories = new Set<string>()
+    let directoriesDirty = false
     yield* ripgrep
       .find({
         cwd: location.directory,
@@ -41,8 +42,18 @@ export const ripgrepLayer = Layer.effect(
           Effect.sync(() => {
             state.files.push(entry.path)
             const parts = entry.path.split("/")
-            parts.slice(0, -1).forEach((_, index) => directories.add(parts.slice(0, index + 1).join("/") + path.sep))
-            state.directories = Array.from(directories)
+            const parentDepth = parts.length - 1
+            if (parentDepth > 0) {
+              // Ancestors of an already-seen parent dir are already indexed, so
+              // only walk the ancestor chain the first time a parent is seen.
+              const parent = parts.slice(0, parentDepth).join("/") + path.sep
+              if (!directories.has(parent)) {
+                for (let index = 1; index <= parentDepth; index++) {
+                  directories.add(parts.slice(0, index).join("/") + path.sep)
+                }
+                directoriesDirty = true
+              }
+            }
           }),
       })
       .pipe(Effect.orDie, Effect.asVoid, Effect.forkIn(scope))
@@ -100,6 +111,10 @@ export const ripgrepLayer = Layer.effect(
         }),
       find: (input) =>
         Effect.gen(function* () {
+          if (input.type !== "file" && directoriesDirty) {
+            state.directories = Array.from(directories)
+            directoriesDirty = false
+          }
           const items =
             input.type === "file"
               ? state.files
