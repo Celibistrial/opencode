@@ -489,16 +489,18 @@ export function stream(sessionID: SessionID) {
   })
 }
 
-export function parts(messageID: MessageID) {
+export function parts(messageID: MessageID, options?: { last?: number }) {
   return Effect.gen(function* () {
     const { db } = yield* Database.Service
-    const rows = yield* db
-      .select()
-      .from(PartTable)
-      .where(eq(PartTable.message_id, messageID))
-      .orderBy(PartTable.id)
-      .all()
-      .pipe(Effect.orDie)
+    const base = db.select().from(PartTable).where(eq(PartTable.message_id, messageID))
+    // When only the most recent parts are needed (e.g. doom-loop detection),
+    // fetch the last N by id instead of loading and decoding every part of the
+    // message — a message can carry large tool outputs. Part ids are monotonic
+    // (PartID.ascending), so the last N by id reversed equals the tail in order.
+    const rows =
+      options?.last !== undefined
+        ? (yield* base.orderBy(desc(PartTable.id)).limit(options.last).all().pipe(Effect.orDie)).reverse()
+        : yield* base.orderBy(PartTable.id).all().pipe(Effect.orDie)
     return rows.map(part)
   })
 }
