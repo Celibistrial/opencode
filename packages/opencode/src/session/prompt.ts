@@ -60,6 +60,12 @@ import { LLMEvent } from "@opencode-ai/llm"
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
 
+// Throttle interval for streaming output preview updates. Each update is a durable
+// `message.part.updated` event (synchronous SQLite IMMEDIATE transaction + full-snapshot
+// row), so emitting one per stdout chunk pins the server event loop at 100% CPU for
+// chatty commands. Coalesce intermediate previews; the final state is always flushed.
+const METADATA_THROTTLE_MS = 100
+
 const decodeMessageInfo = Schema.decodeUnknownExit(SessionV1.Info)
 const decodeMessagePart = Schema.decodeUnknownExit(SessionV1.Part)
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
@@ -524,6 +530,7 @@ const layer = Layer.effect(
           const args = Shell.args(sh, input.command, cwd)
           let output = ""
           let aborted = false
+          let dirty = false
 
           const finish = Effect.uninterruptible(
             Effect.gen(function* () {
@@ -564,15 +571,34 @@ const layer = Layer.effect(
                 forceKillAfter: "3 seconds",
               })
               const handle = yield* spawner.spawn(cmd)
-              yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
+              // Coalesce durable output writes to at most one per METADATA_THROTTLE_MS via a forked
+              // flusher. Unlike a leading-edge throttle, this still publishes the latest output
+              // within one window when the command stops emitting chunks (e.g. prints then blocks),
+              // so live output never goes stale.
+              yield* Effect.forkScoped(
                 Effect.gen(function* () {
-                  output += chunk
-                  if (part.state.status === "running") {
-                    part.state.metadata = { output }
-                    yield* sessions.updatePart(part)
+                  while (true) {
+                    yield* Effect.sleep(`${METADATA_THROTTLE_MS} millis`)
+                    if (!dirty) continue
+                    dirty = false
+                    if (part.state.status === "running") {
+                      part.state.metadata = { output }
+                      yield* sessions.updatePart(part)
+                    }
                   }
                 }),
               )
+              yield* Stream.runForEach(Stream.decodeText(handle.all), (chunk) =>
+                Effect.sync(() => {
+                  output += chunk
+                  if (part.state.status === "running") dirty = true
+                }),
+              )
+              // Flush the final streamed preview promptly after the stream drains.
+              if (part.state.status === "running") {
+                part.state.metadata = { output }
+                yield* sessions.updatePart(part)
+              }
               yield* handle.exitCode
             }).pipe(Effect.scoped, Effect.orDie),
           ).pipe(Effect.exit)
