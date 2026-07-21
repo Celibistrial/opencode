@@ -20,8 +20,14 @@ const onUncaughtException = (_error: Error) => {}
 process.on("unhandledRejection", onUnhandledRejection)
 process.on("uncaughtException", onUncaughtException)
 
-// Subscribe to global events and forward them via RPC
+// Subscribe to global events and forward them via RPC.
+// The only consumer on the parent (TUI renderer) side discards sync-wrapped
+// events (packages/tui/src/context/event.ts drops payload.type === "sync"), so
+// skip serializing a copy across the worker boundary that nobody reads. Remote
+// SSE clients that DO need the sync copy for replay receive it directly from
+// GlobalBus via the /global/event handler, not through this RPC bridge.
 GlobalBus.on("event", (event) => {
+  if (event.payload?.type === "sync") return
   Rpc.emit("global.event", event)
 })
 
