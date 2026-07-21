@@ -112,18 +112,31 @@ function splitTurn(input: {
   return Effect.gen(function* () {
     if (input.budget <= 0) return undefined
     if (input.turn.end - input.turn.start <= 1) return undefined
-    for (let start = input.turn.start + 1; start < input.turn.end; start++) {
+    // estimate(slice(start, end)) is monotonically non-increasing in `start`
+    // (dropping a leading message only removes its serialized chunk), so the
+    // original linear scan is a leftmost-threshold search for the smallest
+    // `start` whose suffix fits the budget. Binary-search that boundary using
+    // the same `estimate`, turning O(k) estimations into O(log k).
+    let lo = input.turn.start + 1
+    let hi = input.turn.end - 1
+    let keep: Tail | undefined
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1
       const size = yield* input.estimate({
-        messages: input.messages.slice(start, input.turn.end),
+        messages: input.messages.slice(mid, input.turn.end),
         model: input.model,
       })
-      if (size > input.budget) continue
-      return {
-        start,
-        id: input.messages[start]!.info.id,
-      } satisfies Tail
+      if (size > input.budget) {
+        lo = mid + 1
+      } else {
+        keep = {
+          start: mid,
+          id: input.messages[mid]!.info.id,
+        } satisfies Tail
+        hi = mid - 1
+      }
     }
-    return undefined
+    return keep
   })
 }
 
