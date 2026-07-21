@@ -25,6 +25,11 @@ import { BashArity } from "@/permission/arity"
 export { Parameters } from "./shell/prompt"
 
 const MAX_METADATA_LENGTH = 30_000
+// Throttle interval for streaming output preview updates. Each update is a durable
+// `message.part.updated` event (synchronous SQLite IMMEDIATE transaction + full-snapshot
+// row), so emitting one per stdout chunk pins the server event loop at 100% CPU for
+// chatty commands. Coalesce intermediate previews; the final state is always flushed.
+const METADATA_THROTTLE_MS = 100
 const CWD = new Set(["cd", "chdir", "popd", "pushd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD,
@@ -446,6 +451,7 @@ export const ShellTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
+      let dirty = false
 
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
@@ -499,34 +505,40 @@ export const ShellTool = Tool.define(
 
               if (file) {
                 sink?.write(chunk)
-              } else {
-                full += chunk
-                if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
-                      Effect.sync(() => {
-                        file = next
-                        cut = true
-                        sink = createWriteStream(next, { flags: "a" })
-                        full = ""
-                      }),
-                    ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                        },
-                      }),
-                    ),
-                  )
-                }
+                dirty = true
+                return Effect.void
               }
+              full += chunk
+              if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
+                return trunc.write(full).pipe(
+                  Effect.andThen((next) =>
+                    Effect.sync(() => {
+                      file = next
+                      cut = true
+                      sink = createWriteStream(next, { flags: "a" })
+                      full = ""
+                      dirty = true
+                    }),
+                  ),
+                )
+              }
+              // Mark output dirty; the forked flusher below publishes it at most once per
+              // METADATA_THROTTLE_MS. Unlike a leading-edge throttle, this guarantees the latest
+              // output is published within one window even if the command stops emitting chunks
+              // (e.g. prints then blocks/sleeps), so live output never goes stale.
+              dirty = true
+              return Effect.void
+            }),
+          )
 
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                },
-              })
+          yield* Effect.forkScoped(
+            Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep(`${METADATA_THROTTLE_MS} millis`)
+                if (!dirty) continue
+                dirty = false
+                yield* ctx.metadata({ metadata: { output: last } })
+              }
             }),
           )
 
@@ -557,6 +569,15 @@ export const ShellTool = Tool.define(
           return exit.kind === "exit" ? exit.code : null
         }),
       ).pipe(Effect.orDie)
+
+      // Flush the final streamed preview now: the throttle above may have skipped the
+      // last chunk's update, so publish the complete preview promptly instead of waiting
+      // for completeToolCall to persist the final metadata at tool completion.
+      yield* ctx.metadata({
+        metadata: {
+          output: last,
+        },
+      })
 
       const meta: string[] = []
       if (expired) {
