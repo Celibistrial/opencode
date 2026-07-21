@@ -45,7 +45,12 @@ const FILES = [
   "**/.nyc_output/**",
 ]
 
-export const PATTERNS = [...FILES, ...FOLDERS]
+// @parcel/watcher treats a bare, glob-free entry (e.g. "node_modules") as a
+// single path resolved relative to the watched root, so it only ignores the
+// TOP-LEVEL folder. Nested folders (e.g. packages/*/node_modules) stay watched
+// and produce event storms on installs/builds. Emit globs instead so both the
+// folder node and its contents are ignored at any depth (matching the FILES style).
+export const PATTERNS = [...FILES, ...Array.from(FOLDERS).flatMap((folder) => [`**/${folder}`, `**/${folder}/**`])]
 
 export function match(filepath: string, opts?: { extra?: string[]; whitelist?: string[] }) {
   for (const pattern of opts?.whitelist || []) {
