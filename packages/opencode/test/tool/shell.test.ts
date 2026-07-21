@@ -1131,6 +1131,59 @@ describe("tool.shell abort", () => {
   )
 })
 
+// Emit `n` lines paced `intervalMs` apart so the output arrives as many temporally
+// separate stdout chunks. Instantaneous output would be coalesced by the OS pipe into a
+// couple of reads regardless of throttling; spacing it out reproduces the real
+// long-running-command scenario where each chunk previously triggered its own durable
+// `message.part.updated` event.
+const paced = (n: number, intervalMs: number) => {
+  // No quote characters in the code: evalarg wraps it in shell quotes and does not escape
+  // nested ones (see fill). Emit the bare counter per line so the final line is `n`.
+  const code =
+    "let i=0;const t=setInterval(()=>{if(i>=Number(Bun.argv[1])){clearInterval(t);return}i++;process.stdout.write(i+String.fromCharCode(10))},Number(Bun.argv[2]))"
+  const text = `${bin} -e ${evalarg(code)} ${n} ${intervalMs}`
+  if (PS.has(sh())) return `& ${text}`
+  return text
+}
+
+describe("tool.shell streaming throttle", () => {
+  it.live(
+    "coalesces streaming output into far fewer metadata updates than chunks",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          // 400 lines, 5ms apart => ~2s of output across many chunks (~20 throttle
+          // windows). Without throttling this would emit hundreds of updates; the
+          // throttle bounds it to roughly one per 100ms.
+          const lineCount = 400
+          const updates: string[] = []
+          const result = yield* run(
+            {
+              command: paced(lineCount, 5),
+            },
+            {
+              ...ctx,
+              metadata: (input) =>
+                Effect.sync(() => {
+                  const output = (input.metadata as { output?: string })?.output
+                  if (output) updates.push(output)
+                }),
+            },
+          )
+          // Coalescing happened: far fewer updates than emitted lines/chunks.
+          expect(updates.length).toBeGreaterThan(1)
+          expect(updates.length).toBeLessThan(100)
+          // Final state is not lost: the last update and the result carry the last line.
+          expect(updates.at(-1)).toContain(String(lineCount))
+          expect(result.output.trim().endsWith(String(lineCount))).toBe(true)
+          expect(result.metadata.exit).toBe(0)
+        }),
+      ),
+    20_000,
+  )
+})
+
 describe("tool.shell truncation", () => {
   it.live("truncates output exceeding line limit", () =>
     runIn(
