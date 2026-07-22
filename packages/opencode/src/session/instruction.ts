@@ -72,6 +72,9 @@ const layer: Layer.Layer<
         Effect.succeed({
           // Track which instruction files have already been attached for a given assistant message.
           claims: new Map<MessageID, Set<string>>(),
+          // Memoized result of systemPaths(), keyed on the config object identity so it is
+          // recomputed if (and only if) the instance config is invalidated/reloaded.
+          systemPaths: undefined as { config: unknown; value: Set<string> } | undefined,
         }),
       ),
     )
@@ -109,6 +112,15 @@ const layer: Layer.Layer<
 
     const systemPaths = Effect.fn("Instruction.systemPaths")(function* () {
       const config = yield* cfg.get()
+
+      // systemPaths derives only from the (per-instance) config and the instruction files
+      // present on disk — neither of which changes over the lifetime of an instance unless
+      // the config is reloaded. Previously this ran on every read tool call, re-walking the
+      // filesystem (findUp/existsSafe + glob expansion) each time. Memoize the result and
+      // key it on the config object identity so a config invalidation still forces a recompute.
+      const cached = yield* InstanceState.get(state)
+      if (cached.systemPaths && cached.systemPaths.config === config) return cached.systemPaths.value
+
       const ctx = yield* InstanceState.context
       const paths = new Set<string>()
 
@@ -149,6 +161,7 @@ const layer: Layer.Layer<
         }
       }
 
+      cached.systemPaths = { config, value: paths }
       return paths
     })
 

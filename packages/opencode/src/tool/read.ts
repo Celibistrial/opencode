@@ -12,6 +12,14 @@ import { isPdfAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
+// Upper bound on how many characters of a single (newline-free) line we ever
+// accumulate. Any characters past MAX_LINE_LENGTH are truncated away before
+// output anyway, so we keep exactly one extra character — enough for the
+// `text.length > MAX_LINE_LENGTH` check below to still fire and append the
+// truncation suffix — and drop the rest as they stream in. This bounds memory
+// for pathological files with no newlines (e.g. a minified/one-line bundle)
+// without changing output for any line up to this length.
+const MAX_LINE_ACCUMULATE = MAX_LINE_LENGTH + 1
 const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
 const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
@@ -145,8 +153,54 @@ export const ReadTool = Tool.define<
       // line of the upstream splitLines pipeline) and use a tagged error to stop the
       // upstream file stream as soon as the byte cap is reached.
       const decoder = new TextDecoder("utf-8")
+
+      // Bound the size of any single line *before* Stream.splitLines materializes it.
+      // splitLines buffers characters until it sees a line boundary, so a file with no (or
+      // very sparse) line boundaries would otherwise accumulate the whole line — potentially
+      // gigabytes — in memory before the MAX_LINE_LENGTH truncation below ever runs. We track
+      // how many characters of the current line have been kept and drop everything past
+      // MAX_LINE_ACCUMULATE until the next boundary. The boundary characters themselves
+      // ("\n", "\r", and "\r\n" — everything splitLines breaks on) are always passed through
+      // untouched, so splitLines produces the exact same lines it would have; only oversized
+      // intra-line content (which would be truncated away regardless) is dropped. Output for
+      // any line up to MAX_LINE_ACCUMULATE is therefore unchanged.
+      let kept = 0
+      const capLine = (chunk: string) => {
+        if (chunk.length === 0) return chunk
+        let out = ""
+        let start = 0
+        while (start < chunk.length) {
+          const cr = chunk.indexOf("\r", start)
+          const lf = chunk.indexOf("\n", start)
+          const bound = cr === -1 ? lf : lf === -1 ? cr : Math.min(cr, lf)
+          const end = bound === -1 ? chunk.length : bound + 1
+          const contentLen = (bound === -1 ? end : bound) - start
+          if (kept >= MAX_LINE_ACCUMULATE) {
+            // Current line already at cap: drop its remaining content, keep the boundary char.
+            if (bound !== -1) {
+              out += chunk[bound]
+              kept = 0
+            }
+          } else if (kept + contentLen <= MAX_LINE_ACCUMULATE) {
+            out += chunk.slice(start, end)
+            kept = bound === -1 ? kept + contentLen : 0
+          } else {
+            out += chunk.slice(start, start + (MAX_LINE_ACCUMULATE - kept))
+            if (bound !== -1) {
+              out += chunk[bound]
+              kept = 0
+            } else {
+              kept = MAX_LINE_ACCUMULATE
+            }
+          }
+          start = end
+        }
+        return out
+      }
+
       yield* fs.stream(filepath).pipe(
         Stream.map((bytes) => decoder.decode(bytes, { stream: true })),
+        Stream.map(capLine),
         Stream.splitLines,
         Stream.runForEach((text) =>
           Effect.gen(function* () {
