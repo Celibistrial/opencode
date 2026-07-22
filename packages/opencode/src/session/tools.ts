@@ -23,6 +23,28 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import type { JSONSchema7 } from "@ai-sdk/provider"
+
+// SessionTools.resolve runs inside the per-step prompt loop, so every LLM call
+// re-transforms every tool's JSON schema from scratch. ProviderTransform.schema
+// is a pure function whose output depends only on the schema-relevant model
+// fields it branches on (api.npm, providerID, api.id) and the input schema, and
+// its Gemini/OpenAI/Moonshot sanitizers deep-clone the schema on every call.
+// The model and tool set are effectively constant across a session, so memoize
+// the transformed schema. The cache key serializes exactly those transform
+// inputs, so a hit is byte-identical to a fresh transform and any change to the
+// input schema (e.g. MCP tool re-registration) is a natural cache miss that
+// recomputes. Bounded by (distinct model) x (distinct tool schema), both finite.
+const transformedSchemaCache = new Map<string, JSONSchema7>()
+
+function transformSchema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 {
+  const key = [model.api.npm, model.providerID, model.api.id].join("\u0000") + "\u0000" + JSON.stringify(schema)
+  const cached = transformedSchemaCache.get(key)
+  if (cached) return cached
+  const transformed = ProviderTransform.schema(model, schema)
+  transformedSchemaCache.set(key, transformed)
+  return transformed
+}
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -95,7 +117,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     agent: input.agent,
     permission: input.session.permission,
   })) {
-    const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
+    const schema = transformSchema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
       inputSchema: jsonSchema(schema),
@@ -141,7 +163,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       description:
         "Lists resources provided by connected MCP servers. Resources provide context such as files, database schemas, or application-specific information.",
       inputSchema: jsonSchema(
-        ProviderTransform.schema(input.model, {
+        transformSchema(input.model, {
           type: "object",
           properties: {
             server: {
@@ -223,7 +245,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       description:
         "Lists resource templates provided by connected MCP servers. Resource templates are parameterized resources that can be read after filling in their URI template.",
       inputSchema: jsonSchema(
-        ProviderTransform.schema(input.model, {
+        transformSchema(input.model, {
           type: "object",
           properties: {
             server: {
@@ -306,7 +328,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       description:
         "Read a specific resource from an MCP server using the server name and resource URI. The URI is an MCP identifier and does not need to be a file URL.",
       inputSchema: jsonSchema(
-        ProviderTransform.schema(input.model, {
+        transformSchema(input.model, {
           type: "object",
           properties: {
             server: {
@@ -393,7 +415,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     if (!execute) continue
 
     const schema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
-    const transformed = ProviderTransform.schema(input.model, { ...schema, properties: schema.properties ?? {} })
+    const transformed = transformSchema(input.model, { ...schema, properties: schema.properties ?? {} })
     item.inputSchema = jsonSchema(transformed)
     item.execute = (args, opts) =>
       run.promise(
