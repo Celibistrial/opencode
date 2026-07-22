@@ -24,7 +24,7 @@ import { useEvent } from "../../context/event"
 import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner } from "../../component/spinner"
-import { createSyntaxStyleMemo, generateSubtleSyntax, selectedForeground, useTheme } from "../../context/theme"
+import { selectedForeground, useTheme } from "../../context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
 import type {
@@ -1467,7 +1467,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const duration = createMemo(() => {
     if (!final()) return 0
     if (!props.message.time.completed) return 0
-    const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
+    // Look up the parent user message without subscribing to the array's length
+    // or element indices: `.find` would otherwise re-run this memo on every
+    // message appended to the session (O(n) memos × O(n) scan = O(n²)). The
+    // parent user message always exists and has an immutable `time.created` by
+    // the time the assistant message is finalized, so the untracked read is safe.
+    const list = messages()
+    const user = untrack(() => list.find((x) => x.role === "user" && x.id === props.message.parentID))
     if (!user || !user.time) return 0
     return props.message.time.completed - user.time.created
   })
@@ -1570,7 +1576,7 @@ const PART_MAPPING = {
 const INLINE_TOOL_ICON_WIDTH = 2
 
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
-  const { theme } = useTheme()
+  const { theme, subtleSyntax } = useTheme()
   const ctx = use()
   // Collapsed by default in hide mode: a single line throughout, so the
   // layout never shifts. Click to open the full markdown block, click to close.
@@ -1589,7 +1595,6 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
     return end === undefined ? 0 : Math.max(0, end - props.part.time.start)
   })
   const summary = createMemo(() => reasoningSummary(content()))
-  const syntax = createSyntaxStyleMemo(() => generateSubtleSyntax(theme))
 
   const toggle = () => {
     if (!inMinimal()) return
@@ -1620,7 +1625,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
               filetype="markdown"
               drawUnstyledText={false}
               streaming={true}
-              syntaxStyle={syntax()}
+              syntaxStyle={subtleSyntax()}
               content={summary().body}
               conceal={ctx.conceal()}
               fg={theme.textMuted}
