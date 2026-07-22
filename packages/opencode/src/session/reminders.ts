@@ -5,7 +5,7 @@ import { Agent } from "@/agent/agent"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { PartID } from "./schema"
+import { PartID, MessageID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { Session } from "./session"
 import PROMPT_PLAN from "./prompt/plan.txt"
@@ -24,28 +24,27 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   if (!userMessage) return input.messages
 
   if (!flags.experimentalPlanMode) {
-    if (input.agent.name === "plan") {
-      userMessage.parts.push({
+    // Emit reminders on a fresh, ephemeral trailing user message instead of
+    // mutating the real last user message. The reminder text is never
+    // persisted, so the real (DB-backed) messages stay byte-identical across
+    // turns and remain a stable provider prompt-cache prefix. This synthetic
+    // message only ever rides the moving tail, which is regenerated each turn.
+    const reminderMessageID = MessageID.ascending()
+    const reminders: SessionV1.Part[] = []
+    const addReminder = (text: string) =>
+      reminders.push({
         id: PartID.ascending(),
-        messageID: userMessage.info.id,
+        messageID: reminderMessageID,
         sessionID: userMessage.info.sessionID,
         type: "text",
-        text: PROMPT_PLAN,
+        text,
         synthetic: true,
       })
-    }
+    if (input.agent.name === "plan") addReminder(PROMPT_PLAN)
     const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && msg.info.agent === "plan")
-    if (wasPlan && input.agent.name === "build") {
-      userMessage.parts.push({
-        id: PartID.ascending(),
-        messageID: userMessage.info.id,
-        sessionID: userMessage.info.sessionID,
-        type: "text",
-        text: BUILD_SWITCH,
-        synthetic: true,
-      })
-    }
-    return input.messages
+    if (wasPlan && input.agent.name === "build") addReminder(BUILD_SWITCH)
+    if (reminders.length === 0) return input.messages
+    return [...input.messages, { info: { ...userMessage.info, id: reminderMessageID }, parts: reminders }]
   }
 
   const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
