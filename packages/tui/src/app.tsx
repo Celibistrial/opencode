@@ -89,6 +89,14 @@ import { cliErrorMessage, errorFormat } from "./util/error"
 
 registerOpencodeSpinner()
 
+// The render loop free-runs at `targetFps` whenever anything is live (streaming,
+// spinner, scroll, cursor). At 60fps a real terminal has to *paint* up to 60
+// full frames/sec, which can pin a CPU core. 30fps (opentui's own default) halves
+// that paint load with no perceptible loss for a text UI. `maxFps` caps the
+// burst/immediate-rerender path too. Tunable via OPENCODE_TUI_FPS for terminals
+// that need to go lower (e.g. heavy GPU emulators, tmux, ssh).
+const TUI_FPS = Math.max(5, Math.min(60, Number(process.env["OPENCODE_TUI_FPS"]) || 30))
+
 const appGlobalBindingCommands = [
   "session.list",
   "session.new",
@@ -193,7 +201,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
           try: () =>
             createCliRenderer({
               externalOutputMode: "passthrough",
-              targetFps: 60,
+              targetFps: TUI_FPS,
+              maxFps: TUI_FPS,
               gatherStats: false,
               exitOnCtrlC: false,
               useKittyKeyboard: {},

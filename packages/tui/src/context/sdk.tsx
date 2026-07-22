@@ -50,11 +50,12 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     let last = 0
     const retryDelay = 1000
     const maxRetryDelay = 30000
-    // Coalesce streaming event batches to ~30fps. Every flush triggers a full render
-    // (relayout + repaint + markdown re-parse + native diff), so 33ms instead of 16ms
-    // roughly halves render-pipeline CPU while streaming, with no perceptible difference
-    // at terminal-cell granularity.
-    const FLUSH_INTERVAL_MS = 33
+    // Coalesce streaming event batches. Every flush triggers a full render
+    // (relayout + repaint + markdown re-parse + native diff) AND a terminal repaint,
+    // so fewer flushes = less CPU both here and in the terminal emulator. ~20fps
+    // (48ms) is still smooth for streaming text (which isn't animation) and roughly
+    // a third fewer frames than 30fps. Tunable via OPENCODE_TUI_FLUSH_MS.
+    const FLUSH_INTERVAL_MS = Math.max(16, Math.min(200, Number(process.env["OPENCODE_TUI_FLUSH_MS"]) || 48))
 
     const flush = () => {
       if (queue.length === 0) return
