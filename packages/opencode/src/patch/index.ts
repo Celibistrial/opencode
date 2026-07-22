@@ -402,13 +402,8 @@ function applyReplacements(lines: string[], replacements: Array<[number, number,
   for (let i = replacements.length - 1; i >= 0; i--) {
     const [startIdx, oldLen, newSegment] = replacements[i]
 
-    // Remove old lines
-    result.splice(startIdx, oldLen)
-
-    // Insert new lines
-    for (let j = 0; j < newSegment.length; j++) {
-      result.splice(startIdx + j, 0, newSegment[j])
-    }
+    // Remove old lines and insert new lines in a single splice
+    result.splice(startIdx, oldLen, ...newSegment)
   }
 
   return result
