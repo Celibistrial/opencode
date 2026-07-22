@@ -90,6 +90,12 @@ describe("session.system", () => {
     )
   })
 
+  test("selects the Kimi prompt for DeepSeek model IDs", () => {
+    const prompt = SystemPrompt.provider({ api: { id: "deepseek-v4-pro" } } as Provider.Model)[0]
+    expect(prompt).toContain("interactive general AI agent")
+    expect(prompt).not.toContain("One word answers are best")
+  })
+
   it.effect("skills output is sorted by name and stable across calls", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
