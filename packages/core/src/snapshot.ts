@@ -123,7 +123,10 @@ const layer = Layer.effect(
 
     const enabled = Effect.fnUntraced(function* () {
       if (location.vcs?.type !== "git") return false
-      return Config.latest(yield* config.entries(), "snapshots") !== false
+      const entries = yield* config.entries()
+      // Accept either key: v2 uses `snapshots` (plural); `snapshot` (singular)
+      // is the v1 name, kept as an alias so disabling via either works.
+      return (Config.latest(entries, "snapshots") ?? Config.latest(entries, "snapshot")) !== false
     })
 
     const capture = Effect.fn("Snapshot.capture")(function* () {

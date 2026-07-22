@@ -66,6 +66,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   snapshots: Schema.Boolean.pipe(Schema.optional).annotate({
     description: "Enable snapshots used for undo and revert behavior",
   }),
+  snapshot: Schema.Boolean.pipe(Schema.optional).annotate({
+    description: "Deprecated alias for `snapshots`; accepted so the v1 key name keeps working",
+  }),
   watcher: ConfigWatcher.Info.pipe(Schema.optional).annotate({
     description: "Filesystem watcher configuration",
   }),

@@ -4,7 +4,7 @@ export * as Watcher from "./watcher"
 import { createWrapper } from "@parcel/watcher/wrapper"
 import type ParcelWatcher from "@parcel/watcher"
 import { makeLocationNode } from "../effect/app-node"
-import { Cause, Context, Effect, Layer } from "effect"
+import { Cause, Context, Effect, Layer, Semaphore } from "effect"
 import { FileSystemWatcher } from "@opencode-ai/schema/filesystem-watcher"
 import path from "path"
 import { Config } from "../config"
@@ -47,6 +47,42 @@ function protecteds(dir: string) {
     return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
   })
 }
+
+/**
+ * Build the `@parcel/watcher` ignore list for the `.git` directory watch.
+ *
+ * The `.git` watch exists only to detect branch/ref changes via `.git/HEAD`, so
+ * every other top-level entry is ignored. On large repositories the `objects`
+ * and `logs` subtrees can be enormous (packed objects, LFS, reflogs); if parcel
+ * crawls them the native `subscribe()` can wedge (see #38201, #37111, #37793),
+ * so it is important these are pruned from the crawl, not merely filtered from
+ * the event stream.
+ *
+ * @parcel/watcher's wrapper (`normalizeOptions`) treats a non-glob ignore entry
+ * as a path, resolves it against the subscribe directory, and stores it in
+ * `ignorePaths`; the native `Watcher::isIgnored` then prunes any path equal to
+ * or beneath an `ignorePaths` entry (`fts` uses `FTS_SKIP`, inotify never
+ * descends, FSEvents excludes it). We emit ABSOLUTE paths explicitly instead of
+ * relying on that implicit resolution, so the subtree-pruning intent is
+ * unambiguous and directly testable.
+ *
+ * `HEAD` is always kept watchable so branch switches (which rewrite `.git/HEAD`)
+ * still surface.
+ */
+export function gitWatchIgnore(gitDirectory: string, entries: readonly string[]): string[] {
+  return entries.filter((name) => name !== "HEAD").map((name) => path.join(gitDirectory, name))
+}
+
+/**
+ * Single-flight gate used to serialize native `@parcel/watcher` subscribes.
+ *
+ * Exactly one permit, so at most one `subscribe()` runs at a time. Concurrent
+ * parcel subscribes have deadlocked natively (#37111); the permit is held for
+ * the full duration of a subscribe (including its initial crawl), removing the
+ * concurrency hazard. Exported so the serialization guarantee can be tested
+ * without a real parcel backend.
+ */
+export const makeSubscribeGate = Semaphore.make(1)
 
 export const hasNativeBinding = () => !!watcher()
 
@@ -91,17 +127,30 @@ const layer = Layer.effect(
       }
     }
 
-    const subscribe = (directory: string, ignore: string[]) => {
-      const pending = w.subscribe(directory, callback, { ignore, backend })
-      return Effect.promise(() => pending).pipe(
-        Effect.tap((subscription) => Effect.sync(() => subscriptions.push(subscription))),
-        Effect.timeout(SUBSCRIBE_TIMEOUT_MS),
-        Effect.catchCause((cause) => {
-          pending.then((subscription) => subscription.unsubscribe()).catch(() => {})
-          return Effect.logError("failed to subscribe", { directory, cause: Cause.pretty(cause) })
+    // Concurrent `@parcel/watcher` subscribes have been implicated in a native
+    // futex deadlock (#37111). The native `subscribe()` also runs its
+    // backend-shared bootstrap synchronously on the calling thread before the
+    // returned promise is awaited, so `Effect.timeout` below cannot rescue a
+    // wedge. Funnel every subscribe through a single-permit gate so at most one
+    // native `subscribe()` is ever in flight; the gate is held until the
+    // subscription resolves (or times out), which also serializes the initial
+    // directory crawls.
+    const gate = yield* makeSubscribeGate
+
+    const subscribe = (directory: string, ignore: string[]) =>
+      gate.withPermits(1)(
+        Effect.suspend(() => {
+          const pending = w.subscribe(directory, callback, { ignore, backend })
+          return Effect.promise(() => pending).pipe(
+            Effect.tap((subscription) => Effect.sync(() => subscriptions.push(subscription))),
+            Effect.timeout(SUBSCRIBE_TIMEOUT_MS),
+            Effect.catchCause((cause) => {
+              pending.then((subscription) => subscription.unsubscribe()).catch(() => {})
+              return Effect.logError("failed to subscribe", { directory, cause: Cause.pretty(cause) })
+            }),
+          )
         }),
       )
-    }
 
     const config = (yield* (yield* Config.Service).entries())
       .filter((entry): entry is Config.Document => entry.type === "document")
@@ -116,10 +165,10 @@ const layer = Layer.effect(
       const resolved = (yield* git.repo.discover(location.directory))?.gitDirectory
       const vcs = resolved ? yield* fs.realPath(resolved).pipe(Effect.catch(() => Effect.succeed(resolved))) : undefined
       if (vcs && !config.includes(".git") && !config.includes(vcs) && (!resolved || !config.includes(resolved))) {
-        const ignore = (yield* fs.readDirectoryEntries(vcs).pipe(Effect.catch(() => Effect.succeed([])))).flatMap(
-          (entry) => (entry.name === "HEAD" ? [] : [entry.name]),
+        const entries = (yield* fs.readDirectoryEntries(vcs).pipe(Effect.catch(() => Effect.succeed([])))).map(
+          (entry) => entry.name,
         )
-        yield* Effect.forkScoped(subscribe(vcs, ignore))
+        yield* Effect.forkScoped(subscribe(vcs, gitWatchIgnore(vcs, entries)))
       }
     }
 
