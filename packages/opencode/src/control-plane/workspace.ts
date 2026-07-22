@@ -661,7 +661,7 @@ const layer = Layer.effect(
             sessionID: input.sessionID,
           })
 
-        const batches = Iterable.chunksOf(rows, 10)
+        const batches = Iterable.chunksOf(rows, 100)
         const total = Iterable.size(batches)
 
         yield* Effect.forEach(
