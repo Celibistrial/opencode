@@ -32,16 +32,27 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
-const locks = new Map<string, Semaphore.Semaphore>()
+// Per-path edit locks. Ref-counted so entries can be pruned once no edit is
+// using them, preventing an unbounded leak on long-lived servers. The entry is
+// only deleted when refs reaches zero, so any concurrent edit that has already
+// acquired the entry keeps sharing the same semaphore (mutual exclusion holds).
+const locks = new Map<string, { semaphore: Semaphore.Semaphore; refs: number }>()
 
-function lock(filePath: string) {
-  const resolvedFilePath = FSUtil.resolve(filePath)
-  const hit = locks.get(resolvedFilePath)
-  if (hit) return hit
+function acquireLock(resolvedFilePath: string) {
+  let entry = locks.get(resolvedFilePath)
+  if (!entry) {
+    entry = { semaphore: Semaphore.makeUnsafe(1), refs: 0 }
+    locks.set(resolvedFilePath, entry)
+  }
+  entry.refs++
+  return entry
+}
 
-  const next = Semaphore.makeUnsafe(1)
-  locks.set(resolvedFilePath, next)
-  return next
+function releaseLock(resolvedFilePath: string) {
+  const entry = locks.get(resolvedFilePath)
+  if (!entry) return
+  entry.refs--
+  if (entry.refs <= 0) locks.delete(resolvedFilePath)
 }
 
 export const Parameters = Schema.Struct({
@@ -85,8 +96,7 @@ export const EditTool = Tool.define(
           let diff = ""
           let contentOld = ""
           let contentNew = ""
-          yield* lock(filePath).withPermits(1)(
-            Effect.gen(function* () {
+          const applyEdit = Effect.gen(function* () {
               if (params.oldString === "") {
                 const existed = yield* afs.existsSafe(filePath)
                 if (existed) {
@@ -161,7 +171,15 @@ export const EditTool = Tool.define(
                 file: filePath,
                 event: "change",
               })
-            }).pipe(Effect.orDie),
+          }).pipe(Effect.orDie)
+
+          // Async realpath (avoids blocking realpathSync) for the lock key, then
+          // acquire/release the ref-counted lock so its map entry is pruned when done.
+          const resolvedFilePath = yield* afs.resolve(filePath)
+          yield* Effect.acquireUseRelease(
+            Effect.sync(() => acquireLock(resolvedFilePath)),
+            (entry) => entry.semaphore.withPermits(1)(applyEdit),
+            () => Effect.sync(() => releaseLock(resolvedFilePath)),
           )
 
           let additions = 0
@@ -206,7 +224,11 @@ export const EditTool = Tool.define(
   }),
 )
 
-export type Replacer = (content: string, find: string) => Generator<string, void, unknown>
+export type Replacer = (
+  content: string,
+  find: string,
+  precomputedLines?: string[],
+) => Generator<string, void, unknown>
 
 // Similarity thresholds for block anchor fallback matching
 const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.65
@@ -254,14 +276,17 @@ export const SimpleReplacer: Replacer = function* (_content, find) {
   yield find
 }
 
-export const LineTrimmedReplacer: Replacer = function* (content, find) {
-  const originalLines = content.split("\n")
+export const LineTrimmedReplacer: Replacer = function* (content, find, precomputedLines) {
+  const originalLines = precomputedLines ?? content.split("\n")
   const searchLines = find.split("\n")
 
   if (searchLines[searchLines.length - 1] === "") {
     searchLines.pop()
   }
 
+  // Track the running character offset of the current line instead of
+  // recomputing it with an O(i) loop per match (avoids O(n^2) on many matches).
+  let lineStartIndex = 0
   for (let i = 0; i <= originalLines.length - searchLines.length; i++) {
     let matches = true
 
@@ -276,10 +301,7 @@ export const LineTrimmedReplacer: Replacer = function* (content, find) {
     }
 
     if (matches) {
-      let matchStartIndex = 0
-      for (let k = 0; k < i; k++) {
-        matchStartIndex += originalLines[k].length + 1
-      }
+      const matchStartIndex = lineStartIndex
 
       let matchEndIndex = matchStartIndex
       for (let k = 0; k < searchLines.length; k++) {
@@ -291,11 +313,13 @@ export const LineTrimmedReplacer: Replacer = function* (content, find) {
 
       yield content.substring(matchStartIndex, matchEndIndex)
     }
+
+    lineStartIndex += originalLines[i].length + 1
   }
 }
 
-export const BlockAnchorReplacer: Replacer = function* (content, find) {
-  const originalLines = content.split("\n")
+export const BlockAnchorReplacer: Replacer = function* (content, find, precomputedLines) {
+  const originalLines = precomputedLines ?? content.split("\n")
   const searchLines = find.split("\n")
 
   if (searchLines.length < 3) {
@@ -433,12 +457,12 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   }
 }
 
-export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) {
+export const WhitespaceNormalizedReplacer: Replacer = function* (content, find, precomputedLines) {
   const normalizeWhitespace = (text: string) => text.replace(/\s+/g, " ").trim()
   const normalizedFind = normalizeWhitespace(find)
 
   // Handle single line matches
-  const lines = content.split("\n")
+  const lines = precomputedLines ?? content.split("\n")
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (normalizeWhitespace(line) === normalizedFind) {
@@ -477,7 +501,7 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
   }
 }
 
-export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
+export const IndentationFlexibleReplacer: Replacer = function* (content, find, precomputedLines) {
   const removeIndentation = (text: string) => {
     const lines = text.split("\n")
     const nonEmptyLines = lines.filter((line) => line.trim().length > 0)
@@ -494,7 +518,7 @@ export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
   }
 
   const normalizedFind = removeIndentation(find)
-  const contentLines = content.split("\n")
+  const contentLines = precomputedLines ?? content.split("\n")
   const findLines = find.split("\n")
 
   for (let i = 0; i <= contentLines.length - findLines.length; i++) {
@@ -505,7 +529,7 @@ export const IndentationFlexibleReplacer: Replacer = function* (content, find) {
   }
 }
 
-export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
+export const EscapeNormalizedReplacer: Replacer = function* (content, find, precomputedLines) {
   const unescapeString = (str: string): string => {
     return str.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (match, capturedChar) => {
       switch (capturedChar) {
@@ -541,7 +565,7 @@ export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
   }
 
   // Also try finding escaped versions in content that match unescaped find
-  const lines = content.split("\n")
+  const lines = precomputedLines ?? content.split("\n")
   const findLines = unescapedFind.split("\n")
 
   for (let i = 0; i <= lines.length - findLines.length; i++) {
@@ -555,20 +579,18 @@ export const EscapeNormalizedReplacer: Replacer = function* (content, find) {
 }
 
 export const MultiOccurrenceReplacer: Replacer = function* (content, find) {
-  // This replacer yields all exact matches, allowing the replace function
-  // to handle multiple occurrences based on replaceAll parameter
-  let startIndex = 0
-
-  while (true) {
-    const index = content.indexOf(find, startIndex)
-    if (index === -1) break
-
+  // Yields the exact match string for the replace() function to handle based on
+  // the replaceAll parameter. Because every occurrence yields the identical
+  // string, and replace()'s decision (unique match / replaceAll / ambiguous)
+  // depends only on that string and not on how many times it is yielded,
+  // emitting it a single time is behaviorally identical to yielding it once per
+  // occurrence while avoiding k redundant full-content indexOf/lastIndexOf scans.
+  if (content.indexOf(find) !== -1) {
     yield find
-    startIndex = index + find.length
   }
 }
 
-export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
+export const TrimmedBoundaryReplacer: Replacer = function* (content, find, precomputedLines) {
   const trimmedFind = find.trim()
 
   if (trimmedFind === find) {
@@ -582,7 +604,7 @@ export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
   }
 
   // Also try finding blocks where trimmed content matches
-  const lines = content.split("\n")
+  const lines = precomputedLines ?? content.split("\n")
   const findLines = find.split("\n")
 
   for (let i = 0; i <= lines.length - findLines.length; i++) {
@@ -594,7 +616,7 @@ export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
   }
 }
 
-export const ContextAwareReplacer: Replacer = function* (content, find) {
+export const ContextAwareReplacer: Replacer = function* (content, find, precomputedLines) {
   const findLines = find.split("\n")
   if (findLines.length < 3) {
     // Need at least 3 lines to have meaningful context
@@ -606,7 +628,7 @@ export const ContextAwareReplacer: Replacer = function* (content, find) {
     findLines.pop()
   }
 
-  const contentLines = content.split("\n")
+  const contentLines = precomputedLines ?? content.split("\n")
 
   // Extract first and last lines as context anchors
   const firstLine = findLines[0].trim()
@@ -700,6 +722,10 @@ export function replace(content: string, oldString: string, newString: string, r
 
   let notFound = true
 
+  // Split the full file once and share it with every replacer in the fallback
+  // chain instead of each replacer recomputing content.split("\n").
+  const contentLines = content.split("\n")
+
   for (const replacer of [
     SimpleReplacer,
     LineTrimmedReplacer,
@@ -711,7 +737,7 @@ export function replace(content: string, oldString: string, newString: string, r
     ContextAwareReplacer,
     MultiOccurrenceReplacer,
   ]) {
-    for (const search of replacer(content, oldString)) {
+    for (const search of replacer(content, oldString, contentLines)) {
       const index = content.indexOf(search)
       if (index === -1) continue
       notFound = false
