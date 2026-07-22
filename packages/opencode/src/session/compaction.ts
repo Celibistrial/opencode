@@ -25,8 +25,17 @@ import { SessionCompactionEvent } from "@opencode-ai/schema/session-compaction-e
 
 export const Event = SessionCompactionEvent
 
-export const PRUNE_MINIMUM = 20_000
-export const PRUNE_PROTECT = 40_000
+// Hysteresis watermarks for prune (opt-in). Pruning stamps `time.compacted` on old
+// tool parts, which then render as "[Old tool result content cleared]" — rewriting
+// bytes deep in the prompt prefix and busting the provider prompt cache for that turn.
+// To avoid busting the cache every turn, prune is BATCHED: a prune pass only runs once
+// the unpruned old tool output grows past the PRUNE_TRIGGER high-water mark, and when it
+// runs it clears down to the PRUNE_TARGET low-water mark (well below the trigger). Between
+// prunes the prefix is byte-stable, so the cache survives most turns. The token ceiling is
+// still bounded — unpruned old tool output can never exceed PRUNE_TRIGGER plus a single
+// turn's growth, because prune runs after every turn.
+export const PRUNE_TARGET = 20_000 // low-water: tool output kept verbatim after a prune pass
+export const PRUNE_TRIGGER = 60_000 // high-water: run a prune pass once unpruned old tool output reaches this
 const TOOL_OUTPUT_MAX_CHARS = 2_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
@@ -251,8 +260,11 @@ const layer = Layer.effect(
       }
     })
 
-    // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
-    // calls, then erases output of older tool calls to free context space
+    // Goes backwards through parts accumulating unpruned tool output. Everything beyond the
+    // most recent PRUNE_TARGET tokens is a prune candidate, but a prune pass only actually
+    // fires once the total unpruned old tool output reaches PRUNE_TRIGGER — see the hysteresis
+    // note on the watermark constants above. Batching this way keeps the prompt prefix
+    // byte-stable across most turns so the provider cache survives, while still bounding tokens.
     const prune = Effect.fn("SessionCompaction.prune")(function* (input: { sessionID: SessionID }) {
       const cfg = yield* config.get()
       if (!cfg.compaction?.prune) return
@@ -264,7 +276,6 @@ const layer = Layer.effect(
       if (!msgs) return
 
       let total = 0
-      let pruned = 0
       const toPrune: SessionV1.ToolPart[] = []
       let turns = 0
 
@@ -279,16 +290,22 @@ const layer = Layer.effect(
           if (part.state.status !== "completed") continue
           if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
           if (part.state.time.compacted) break loop
-          const estimate = Token.estimate(part.state.output)
-          total += estimate
-          if (total <= PRUNE_PROTECT) continue
-          pruned += estimate
+          total += Token.estimate(part.state.output)
+          // Keep the most recent PRUNE_TARGET tokens of tool output verbatim; everything older
+          // is a candidate to clear if this pass fires.
+          if (total <= PRUNE_TARGET) continue
           toPrune.push(part)
         }
       }
 
-      yield* Effect.logInfo("found", { pruned, total })
-      if (pruned > PRUNE_MINIMUM) {
+      // `total` is the current unpruned old tool output. Only rewrite the prefix once it has
+      // grown past the high-water mark; otherwise leave history untouched so the cache survives.
+      // When we do prune we clear everything beyond PRUNE_TARGET, dropping unpruned output back to
+      // ~PRUNE_TARGET, so it takes (PRUNE_TRIGGER - PRUNE_TARGET) tokens of new growth before the
+      // next prune fires. Since prune runs after every turn, total is bounded by PRUNE_TRIGGER plus
+      // a single turn's growth.
+      yield* Effect.logInfo("found", { candidates: toPrune.length, total })
+      if (total >= PRUNE_TRIGGER) {
         for (const part of toPrune) {
           if (part.state.status === "completed") {
             part.state.time.compacted = Date.now()
