@@ -4,6 +4,7 @@ import { Rpc } from "@/util/rpc"
 import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
+import { createDeltaCoalescer } from "./delta-coalescer"
 import { ServerAuth } from "@/server/auth"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
@@ -26,9 +27,15 @@ process.on("uncaughtException", onUncaughtException)
 // skip serializing a copy across the worker boundary that nobody reads. Remote
 // SSE clients that DO need the sync copy for replay receive it directly from
 // GlobalBus via the /global/event handler, not through this RPC bridge.
+// Merge per-token part.delta events within a short window so a fast model doesn't do
+// one cross-thread postMessage per token (the merge is loss-free and never reorders).
+const coalescer = createDeltaCoalescer({
+  emit: (event) => Rpc.emit("global.event", event),
+  windowMs: 20,
+})
 GlobalBus.on("event", (event) => {
   if (event.payload?.type === "sync") return
-  Rpc.emit("global.event", event)
+  coalescer.handle(event)
 })
 
 let server: Awaited<ReturnType<typeof Server.listen>> | undefined
