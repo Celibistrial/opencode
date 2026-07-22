@@ -48,7 +48,7 @@ describe("applyCachePolicy", () => {
     }),
   )
 
-  it.effect("'auto' marks the last tool, last system part, and latest user message on Anthropic", () =>
+  it.effect("'auto' marks the last tool, last system part, and the final two messages on Anthropic", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare(
         LLM.request({
@@ -64,12 +64,18 @@ describe("applyCachePolicy", () => {
         }),
       )
 
+      // Moving 2-message tail: the second-to-last and last messages both get a
+      // breakpoint (so the growing intra-turn tail stays cached), while earlier
+      // messages do not. Total markers: 1 tool + 1 system + 2 messages = 4.
       expect(prepared.body).toMatchObject({
         tools: [{ name: "t1", cache_control: { type: "ephemeral" } }],
         system: [{ type: "text", text: "Sys A", cache_control: { type: "ephemeral" } }],
         messages: [
           { role: "user", content: [{ type: "text", text: "first user" }] },
-          { role: "assistant", content: [{ type: "text", text: "assistant reply" }] },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "assistant reply", cache_control: { type: "ephemeral" } }],
+          },
           {
             role: "user",
             content: [{ type: "text", text: "latest user message", cache_control: { type: "ephemeral" } }],
@@ -127,6 +133,8 @@ describe("applyCachePolicy", () => {
         }),
       )
 
+      // Moving 2-message tail: cachePoints follow the second-to-last and last
+      // messages. Total markers: 1 tool + 1 system + 2 messages = 4.
       expect(prepared.body).toMatchObject({
         toolConfig: {
           tools: [{ toolSpec: { name: "t1" } }, { cachePoint: { type: "default" } }],
@@ -134,7 +142,7 @@ describe("applyCachePolicy", () => {
         system: [{ text: "Sys" }, { cachePoint: { type: "default" } }],
         messages: [
           { role: "user", content: [{ text: "first user" }] },
-          { role: "assistant", content: [{ text: "reply" }] },
+          { role: "assistant", content: [{ text: "reply" }, { cachePoint: { type: "default" } }] },
           { role: "user", content: [{ text: "latest user" }, { cachePoint: { type: "default" } }] },
         ],
       })

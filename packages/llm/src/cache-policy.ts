@@ -3,12 +3,23 @@
 // body builder, so the existing inline-hint lowering path handles the rest.
 //
 // The default `"auto"` shape places one breakpoint at the last tool definition,
-// one at the last system part, and one at the latest user message. This
-// matches what production agent harnesses (LangChain's caching middleware,
-// kern-ai's 10x cost-reduction playbook) converge on for tool-use loops: the
-// latest user message stays put while a single turn explodes into many
-// assistant/tool round-trips, so caching at that boundary lets every
-// intra-turn API call hit the prefix.
+// one at the last system part, and two on a moving window over the final two
+// messages. The moving window is what makes intra-turn tool loops cheap: a
+// single user turn explodes into many assistant/tool round-trips, and the tail
+// after the latest user message GROWS on every step. A fixed breakpoint at the
+// latest user message would leave that growing tail behind the last cache
+// boundary, so each intra-turn request re-pays the whole current-turn tail at
+// full input price. Marking the last two messages instead lets each request's
+// trailing breakpoints become the cached prefix for the next request: step N
+// writes a cache entry at its final message, step N+1 reads it and only pays
+// for the fresh assistant/tool blocks it appended. This mirrors the AI-SDK
+// path's `applyCaching` last-2 window (packages/opencode/src/provider/
+// transform.ts) so both runtimes cache identically.
+//
+// Budget: 1 (tools) + 1 (system) + 2 (message tail) = 4, exactly Anthropic's
+// per-request breakpoint cap. The lowering layer
+// (protocols/anthropic-messages.ts) still counts emitted markers and drops any
+// beyond 4, so manual over-marking can never produce a 400.
 //
 // Manual `cache: CacheHint` placements on individual parts are preserved —
 // this function only fills gaps the caller left empty.
@@ -18,7 +29,7 @@ import { LLMRequest, Message, ToolDefinition, type ContentPart } from "./schema/
 const AUTO: CachePolicyObject = {
   tools: true,
   system: true,
-  messages: "latest-user-message",
+  messages: { tail: 2 },
 }
 
 const NONE: CachePolicyObject = {}
@@ -27,7 +38,7 @@ const NONE: CachePolicyObject = {}
 //   - undefined   → "auto" — caching is on by default. The math favors it:
 //                   Anthropic 5m-cache write is 1.25x base, read is 0.1x,
 //                   so a single reuse within 5 minutes already wins.
-//   - "auto"      → tools + system + latest user msg.
+//   - "auto"      → tools + system + moving 2-message tail.
 //   - "none"      → no auto placement; manual `CacheHint`s still flow.
 //   - object form → exactly what the caller asked for.
 const resolve = (policy: CachePolicy | undefined): CachePolicyObject => {
