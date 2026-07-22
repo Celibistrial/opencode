@@ -390,21 +390,29 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
     const filtered = msg.content.map((part) => {
       if (part.type !== "file" && part.type !== "image") return part
 
-      // Check for empty base64 image data
-      if (part.type === "image") {
-        const imageStr = String(part.image)
-        if (imageStr.startsWith("data:")) {
-          const match = imageStr.match(/^data:([^;]+);base64,(.*)$/)
-          if (match && (!match[2] || match[2].length === 0)) {
-            return {
-              type: "text" as const,
-              text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
-            }
+      // Stringify the image source once; reused for the empty check and mime below.
+      const imageStr = part.type === "image" ? String(part.image) : undefined
+
+      // Check for empty base64 image data. Equivalent to matching
+      // /^data:([^;]+);base64,(.*)$/ with an empty capture group, but without
+      // allocating a full copy of the payload: the mime must be non-empty with
+      // no ";" before the marker, and nothing may follow ";base64,".
+      if (part.type === "image" && imageStr!.startsWith("data:")) {
+        const marker = ";base64,"
+        const markerIndex = imageStr!.indexOf(marker)
+        if (
+          markerIndex > "data:".length &&
+          imageStr!.indexOf(";") === markerIndex &&
+          markerIndex + marker.length === imageStr!.length
+        ) {
+          return {
+            type: "text" as const,
+            text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
           }
         }
       }
 
-      const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
+      const mime = part.type === "image" ? imageStr!.split(";")[0].replace("data:", "") : part.mediaType
       const filename = part.type === "file" ? part.filename : undefined
       const modality = mimeToModality(mime)
       if (!modality) return part
