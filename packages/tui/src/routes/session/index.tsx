@@ -552,6 +552,46 @@ export function Session() {
       },
     },
     {
+      // Side session ("by the way"): fork the current session into a standalone
+      // scratch session (shares the transcript, parent left untouched), tag it via
+      // metadata.btw so `/back` can return, and switch the TUI to it. Uses fork (a
+      // root session) rather than parentID, which would make the session read-only.
+      title: "Side session (btw)",
+      value: "session.btw",
+      category: "Session",
+      slash: {
+        name: "btw",
+      },
+      run: async () => {
+        const parentID = route.sessionID
+        const parentTitle = session()?.title ?? "session"
+        const forked = await sdk.client.session.fork({ sessionID: parentID })
+        const created = forked.data
+        if (!created) return
+        await sdk.client.session.update({
+          sessionID: created.id,
+          title: "btw: " + parentTitle,
+          metadata: { ...((created.metadata as Record<string, unknown> | undefined) ?? {}), btw: { parentID } },
+        })
+        navigate({ type: "session", sessionID: created.id })
+        dialog.clear()
+      },
+    },
+    {
+      title: "Return from side session",
+      value: "session.btw.return",
+      category: "Session",
+      slash: {
+        name: "back",
+      },
+      enabled: !!(session()?.metadata as Record<string, any> | undefined)?.btw?.parentID,
+      run: () => {
+        const parentID = (session()?.metadata as Record<string, any> | undefined)?.btw?.parentID
+        if (parentID) navigate({ type: "session", sessionID: parentID })
+        dialog.clear()
+      },
+    },
+    {
       title: "Compact session",
       value: "session.compact",
       category: "Session",

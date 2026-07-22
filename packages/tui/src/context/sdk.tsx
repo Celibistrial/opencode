@@ -50,6 +50,11 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     let last = 0
     const retryDelay = 1000
     const maxRetryDelay = 30000
+    // Coalesce streaming event batches to ~30fps. Every flush triggers a full render
+    // (relayout + repaint + markdown re-parse + native diff), so 33ms instead of 16ms
+    // roughly halves render-pipeline CPU while streaming, with no perceptible difference
+    // at terminal-cell granularity.
+    const FLUSH_INTERVAL_MS = 33
 
     const flush = () => {
       if (queue.length === 0) return
@@ -70,10 +75,10 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       const elapsed = Date.now() - last
 
       if (timer) return
-      // If we just flushed recently (within 16ms), batch this with future events
-      // Otherwise, process immediately to avoid latency
-      if (elapsed < 16) {
-        timer = setTimeout(flush, 16)
+      // If we just flushed recently, batch this with future events into the next
+      // frame; otherwise flush immediately to avoid first-token latency.
+      if (elapsed < FLUSH_INTERVAL_MS) {
+        timer = setTimeout(flush, FLUSH_INTERVAL_MS)
         return
       }
       flush()
