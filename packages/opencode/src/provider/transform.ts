@@ -387,6 +387,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
   return msgs.map((msg) => {
     if (msg.role !== "user" || !Array.isArray(msg.content)) return msg
 
+    let changed = false
     const filtered = msg.content.map((part) => {
       if (part.type !== "file" && part.type !== "image") return part
 
@@ -405,6 +406,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
           imageStr!.indexOf(";") === markerIndex &&
           markerIndex + marker.length === imageStr!.length
         ) {
+          changed = true
           return {
             type: "text" as const,
             text: "ERROR: Image file is empty or corrupted. Please provide a valid image.",
@@ -418,6 +420,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       if (!modality) return part
       if (model.capabilities.input[modality]) return part
 
+      changed = true
       const name = filename ? `"${filename}"` : modality
       return {
         type: "text" as const,
@@ -425,6 +428,9 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       }
     })
 
+    // No part was rewritten, so the rebuilt message would be element-for-element
+    // identical to the input - return it unchanged to skip the object/array alloc.
+    if (!changed) return msg
     return { ...msg, content: filtered }
   })
 }
@@ -434,15 +440,28 @@ function mapProviderOptions(
   transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
 ) {
   return msgs.map((msg) => {
-    if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
+    if (!Array.isArray(msg.content)) {
+      const nextOptions = transform(msg.providerOptions)
+      // transform returns its argument by reference when it's a no-op; in that
+      // case the spread would produce an identical object, so reuse msg instead.
+      if (nextOptions === msg.providerOptions) return msg
+      return { ...msg, providerOptions: nextOptions }
+    }
+    const nextOptions = transform(msg.providerOptions)
+    let changed = nextOptions !== msg.providerOptions
+    const content = msg.content.map((part) => {
+      if (part.type === "tool-approval-request" || part.type === "tool-approval-response") return part
+      const nextPartOptions = transform(part.providerOptions)
+      if (nextPartOptions === part.providerOptions) return part
+      changed = true
+      return { ...part, providerOptions: nextPartOptions }
+    })
+    // Nothing was remapped anywhere in this message - avoid rebuilding it.
+    if (!changed) return msg
     return {
       ...msg,
-      providerOptions: transform(msg.providerOptions),
-      content: msg.content.map((part) =>
-        part.type === "tool-approval-request" || part.type === "tool-approval-response"
-          ? part
-          : { ...part, providerOptions: transform(part.providerOptions) },
-      ),
+      providerOptions: nextOptions,
+      content,
     } as typeof msg
   })
 }
