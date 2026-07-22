@@ -329,13 +329,14 @@ export function deriveNewContentsFromChunks(
   const next = Bom.split(newLines.join("\n"))
   const newContent = next.text
 
-  // Generate unified diff
-  const unifiedDiff = generateUnifiedDiff(originalContent.text, newContent)
-
   return {
-    unified_diff: unifiedDiff,
     content: newContent,
     bom: originalContent.bom || next.bom,
+    // Compute the unified diff lazily: most callers only read content/bom and
+    // discard this, so avoid the full-file diff scan unless it is accessed.
+    get unified_diff() {
+      return generateUnifiedDiff(originalContent.text, newContent)
+    },
   }
 }
 
