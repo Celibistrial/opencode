@@ -228,17 +228,34 @@ function levenshtein(a: string, b: string): number {
   if (a === "" || b === "") {
     return Math.max(a.length, b.length)
   }
-  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
-    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  )
+
+  // Levenshtein distance is symmetric, so make `b` the shorter string to bound
+  // the row length (and thus memory) to O(min(a.length, b.length)).
+  if (b.length > a.length) {
+    const t = a
+    a = b
+    b = t
+  }
+
+  // Rolling two-row DP. In the full-matrix version each cell matrix[i][j]
+  // depends only on the previous row (matrix[i - 1][j], matrix[i - 1][j - 1])
+  // and the current row's left neighbour (matrix[i][j - 1]), so keeping just
+  // the previous and current rows computes the identical distance without
+  // allocating the (a.length + 1) x (b.length + 1) matrix.
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
+  let curr = new Array<number>(b.length + 1)
 
   for (let i = 1; i <= a.length; i++) {
+    curr[0] = i
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
     }
+    const tmp = prev
+    prev = curr
+    curr = tmp
   }
-  return matrix[a.length][b.length]
+  return prev[b.length]
 }
 
 export const SimpleReplacer: Replacer = function* (_content, find) {
