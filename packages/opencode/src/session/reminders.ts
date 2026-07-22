@@ -53,8 +53,14 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
     const ctx = yield* InstanceState.context
     const plan = Session.plan(input.session, ctx)
     const exists = yield* fsys.existsSafe(plan)
+    // A prior loop step may have already persisted this reminder on the user
+    // message. Reuse its part id so updatePart updates it in place instead of
+    // appending a duplicate synthetic part every iteration.
+    const existing = userMessage.parts.find(
+      (p) => p.type === "text" && p.synthetic === true && p.text.startsWith(BUILD_SWITCH),
+    )
     const part = yield* sessions.updatePart({
-      id: PartID.ascending(),
+      id: existing?.id ?? PartID.ascending(),
       messageID: userMessage.info.id,
       sessionID: userMessage.info.sessionID,
       type: "text",
@@ -63,7 +69,8 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
         : BUILD_SWITCH,
       synthetic: true,
     })
-    userMessage.parts.push(part)
+    if (existing) Object.assign(existing, part)
+    else userMessage.parts.push(part)
     return input.messages
   }
 
@@ -73,8 +80,15 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const plan = Session.plan(input.session, ctx)
   const exists = yield* fsys.existsSafe(plan)
   if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+  // Stable prefix of the plan-mode reminder (everything before the interpolated
+  // plan-file info), used to detect a copy persisted by an earlier loop step so
+  // we update it in place rather than appending a duplicate every iteration.
+  const planModeMarker = PLAN_MODE.slice(0, PLAN_MODE.indexOf("${planInfo}"))
+  const existing = userMessage.parts.find(
+    (p) => p.type === "text" && p.synthetic === true && p.text.startsWith(planModeMarker),
+  )
   const part = yield* sessions.updatePart({
-    id: PartID.ascending(),
+    id: existing?.id ?? PartID.ascending(),
     messageID: userMessage.info.id,
     sessionID: userMessage.info.sessionID,
     type: "text",
@@ -85,7 +99,8 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
     ),
     synthetic: true,
   })
-  userMessage.parts.push(part)
+  if (existing) Object.assign(existing, part)
+  else userMessage.parts.push(part)
   return input.messages
 })
 
