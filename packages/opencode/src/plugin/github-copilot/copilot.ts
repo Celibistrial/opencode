@@ -12,6 +12,12 @@ const UTILITY_MODELS = ["gpt-5.4-nano", "gpt-4.1", "gpt-4o", "gpt-4o-mini"]
 // Add a small safety buffer when polling to avoid hitting the server
 // slightly too early due to clock skew / timer drift.
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000 // 3 seconds
+// A session's `parentID` is set at creation and never changes, so whether a
+// session is a subagent (and therefore agent-initiated) is invariant for its
+// lifetime. Cache that decision per sessionID to avoid a `session.get`
+// round-trip on every request. The per-message compaction check is NOT cached
+// here because it can differ between messages within the same session.
+const subagentInitiatorCache = new Map<string, boolean>()
 function normalizeDomain(url: string) {
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "")
 }
@@ -395,18 +401,25 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
         return
       }
 
-      const session = await sdk.session
-        .get({
-          path: {
-            id: incoming.sessionID,
-          },
-          query: {
-            directory: input.directory,
-          },
-          throwOnError: true,
-        })
-        .catch(() => undefined)
-      if (!session || !session.data.parentID) return
+      let isSubagent = subagentInitiatorCache.get(incoming.sessionID)
+      if (isSubagent === undefined) {
+        const session = await sdk.session
+          .get({
+            path: {
+              id: incoming.sessionID,
+            },
+            query: {
+              directory: input.directory,
+            },
+            throwOnError: true,
+          })
+          .catch(() => undefined)
+        // On a failed fetch, return without caching so a later request retries.
+        if (!session) return
+        isSubagent = Boolean(session.data.parentID)
+        subagentInitiatorCache.set(incoming.sessionID, isSubagent)
+      }
+      if (!isSubagent) return
       // mark subagent sessions as agent initiated matching standard that other copilot tools have
       output.headers["x-initiator"] = "agent"
     },
