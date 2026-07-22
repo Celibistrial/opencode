@@ -449,30 +449,28 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary),
   )
 
-  // Update terminal window title based on current route and session
-  createEffect(() => {
-    if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
-
-    if (route.data.type === "home") {
-      renderer.setTerminalTitle("OpenCode")
-      return
-    }
-
+  // Compute the desired terminal title. `sync.session.get` returns an object that mutates on
+  // every streaming delta (cost/tokens/parts), so deriving the string in a memo means the
+  // effect below only re-runs when the title text actually changes — otherwise setTerminalTitle
+  // (a native OSC escape write) fired once per token, dominating CPU while a response streamed.
+  const terminalTitle = createMemo(() => {
+    if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return undefined
+    if (route.data.type === "home") return "OpenCode"
     if (route.data.type === "session") {
       const session = sync.session.get(route.data.sessionID)
-      if (!session || isDefaultTitle(session.title)) {
-        renderer.setTerminalTitle("OpenCode")
-        return
-      }
-
+      if (!session || isDefaultTitle(session.title)) return "OpenCode"
       const title = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
-      renderer.setTerminalTitle(`OC | ${title}`)
-      return
+      return `OC | ${title}`
     }
+    if (route.data.type === "plugin") return `OC | ${route.data.id}`
+    return undefined
+  })
 
-    if (route.data.type === "plugin") {
-      renderer.setTerminalTitle(`OC | ${route.data.id}`)
-    }
+  // Update terminal window title only when the derived string changes.
+  createEffect(() => {
+    const title = terminalTitle()
+    if (title === undefined) return
+    renderer.setTerminalTitle(title)
   })
 
   const args = useArgs()
