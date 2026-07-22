@@ -1,5 +1,5 @@
 import { $ } from "bun"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { ConfigProvider, Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect"
@@ -16,6 +16,81 @@ import { tmpdir } from "../fixture/tmpdir"
 import { testEffect } from "../lib/effect"
 
 const describeWatcher = Watcher.hasNativeBinding() && !process.env.CI ? describe : describe.skip
+
+/**
+ * Faithful reimplementation of `@parcel/watcher`'s path-based ignore decision.
+ *
+ * Non-glob ignore entries are resolved against the subscribe directory into
+ * `ignorePaths` (`wrapper.js` `normalizeOptions`), and the native
+ * `Watcher::isIgnored` (Watcher.cc) prunes any path equal to, or beneath, an
+ * ignore path. `gitWatchIgnore` emits absolute paths, so this mirror is exact.
+ */
+function parcelPathIgnored(subscribeDir: string, ignore: string[], candidate: string): boolean {
+  for (const entry of ignore) {
+    const resolved = path.resolve(subscribeDir, entry)
+    if (candidate === resolved || candidate.startsWith(resolved + path.sep)) return true
+  }
+  return false
+}
+
+describe("Watcher.gitWatchIgnore", () => {
+  const gitDir = path.join(path.sep === "\\" ? "C:\\repo" : "/repo", ".git")
+  const entries = ["HEAD", "objects", "refs", "logs", "index", "config", "packed-refs", "hooks", "FETCH_HEAD"]
+  const ignore = Watcher.gitWatchIgnore(gitDir, entries)
+
+  test("returns absolute paths for every entry except HEAD", () => {
+    expect(ignore).not.toContain(path.join(gitDir, "HEAD"))
+    for (const entry of ignore) expect(path.isAbsolute(entry)).toBe(true)
+    expect(ignore).toContain(path.join(gitDir, "objects"))
+  })
+
+  test("prunes the heavy .git subtrees from the crawl", () => {
+    // The expensive subtrees whose crawl wedges parcel on large repos.
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "objects"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "objects", "ab", "cdef0123"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "objects", "pack", "pack-abc.pack"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "logs"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "logs", "HEAD"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "index"))).toBe(true)
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "refs", "heads", "main"))).toBe(true)
+  })
+
+  test("keeps .git/HEAD watchable so branch switches still surface", () => {
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "HEAD"))).toBe(false)
+  })
+
+  test("HEAD prefix does not accidentally match sibling entries", () => {
+    // e.g. FETCH_HEAD/ORIG_HEAD are not HEAD and must be ignored.
+    expect(parcelPathIgnored(gitDir, ignore, path.join(gitDir, "FETCH_HEAD"))).toBe(true)
+  })
+})
+
+describe("Watcher.makeSubscribeGate", () => {
+  test("serializes overlapping subscribes (single-flight)", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const gate = yield* Watcher.makeSubscribeGate
+        let active = 0
+        let maxActive = 0
+        const order: number[] = []
+        const work = (id: number) =>
+          gate.withPermits(1)(
+            Effect.gen(function* () {
+              order.push(id)
+              active += 1
+              maxActive = Math.max(maxActive, active)
+              yield* Effect.sleep("40 millis")
+              active -= 1
+            }),
+          )
+        yield* Effect.all([work(1), work(2), work(3)], { concurrency: "unbounded" })
+        // A single permit means no two subscribes are ever in flight together.
+        expect(maxActive).toBe(1)
+        expect(order).toHaveLength(3)
+      }),
+    )
+  })
+})
 
 type WatcherEvent = { file: string; event: "add" | "change" | "unlink" }
 

@@ -164,6 +164,70 @@ describe("Snapshot", () => {
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
     ),
   )
+
+  // The v2 gate reads `snapshots` (plural); `snapshot` (singular) is the v1
+  // key. Users disabling snapshots via either key must have capture stay off.
+  for (const [label, config] of [
+    ["snapshots", { snapshots: false }],
+    ["snapshot", { snapshot: false }],
+  ] as const) {
+    testEffect(Layer.empty).live(`respects \`${label}: false\` and skips capture`, () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) =>
+          Effect.gen(function* () {
+            const project = path.join(tmp.path, "project")
+            yield* Effect.promise(async () => {
+              await fs.mkdir(project)
+              await fs.writeFile(path.join(project, "tracked.txt"), "one\n")
+              await fs.writeFile(path.join(project, "opencode.json"), JSON.stringify(config))
+              await $`git init`.cwd(project).quiet()
+              await $`git config core.fsmonitor false`.cwd(project).quiet()
+              await $`git config commit.gpgsign false`.cwd(project).quiet()
+              await $`git config user.email test@opencode.test`.cwd(project).quiet()
+              await $`git config user.name Test`.cwd(project).quiet()
+              await $`git add .`.cwd(project).quiet()
+              await $`git commit -m initial`.cwd(project).quiet()
+            })
+            expect(
+              yield* Effect.gen(function* () {
+                const snapshot = yield* Snapshot.Service
+                return yield* snapshot.capture()
+              }).pipe(Effect.provide(snapshotLayer(tmp.path, project))),
+            ).toBeUndefined()
+          }),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      ),
+    )
+  }
+
+  testEffect(Layer.empty).live("captures by default when no snapshot config is set", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) =>
+        Effect.gen(function* () {
+          const project = path.join(tmp.path, "project")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(project)
+            await fs.writeFile(path.join(project, "tracked.txt"), "one\n")
+            await $`git init`.cwd(project).quiet()
+            await $`git config core.fsmonitor false`.cwd(project).quiet()
+            await $`git config commit.gpgsign false`.cwd(project).quiet()
+            await $`git config user.email test@opencode.test`.cwd(project).quiet()
+            await $`git config user.name Test`.cwd(project).quiet()
+            await $`git add .`.cwd(project).quiet()
+            await $`git commit -m initial`.cwd(project).quiet()
+          })
+          expect(
+            yield* Effect.gen(function* () {
+              const snapshot = yield* Snapshot.Service
+              return yield* snapshot.capture()
+            }).pipe(Effect.provide(snapshotLayer(tmp.path, project))),
+          ).toBeDefined()
+        }),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
 })
 
 function snapshotLayer(data: string, directory: string) {
