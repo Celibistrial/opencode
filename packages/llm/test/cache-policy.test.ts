@@ -234,6 +234,26 @@ describe("applyCachePolicy", () => {
     }),
   )
 
+  test("rejects a fractional messages.tail (would compute a non-integer array index)", () => {
+    expect(() =>
+      LLM.request({
+        model: anthropicModel,
+        messages: [Message.user("u1"), Message.assistant("a1")],
+        cache: { messages: { tail: 1.5 } },
+      }),
+    ).toThrow()
+  })
+
+  test("rejects a negative messages.tail", () => {
+    expect(() =>
+      LLM.request({
+        model: anthropicModel,
+        messages: [Message.user("u1"), Message.assistant("a1")],
+        cache: { messages: { tail: -1 } },
+      }),
+    ).toThrow()
+  })
+
   it.effect("'latest-assistant' marks the last assistant message", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare(
