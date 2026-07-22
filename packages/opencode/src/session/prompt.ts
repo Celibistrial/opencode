@@ -1245,7 +1245,10 @@ const layer = Layer.effect(
             .pipe(Effect.onInterrupt(() => finalizeInterruptedAssistant))
 
           const outcome: "break" | "continue" = yield* Effect.gen(function* () {
-            const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+            // Match by id: reminders may append a synthetic trailing user
+            // message, so `findLast(role === "user")` could return that instead
+            // of the real last user message whose parts we need here.
+            const lastUserMsg = msgs.find((m) => m.info.id === lastUser.id) ?? msgs.findLast((m) => m.info.role === "user")
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
 
