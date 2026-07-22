@@ -133,6 +133,39 @@ const layer = Layer.effect(
             "*.env.*": "ask",
             "*.env.example": "allow",
           },
+          // Allow shell by default, but prompt on commands that install software, fetch
+          // from the network, escalate privilege, or destroy files. More-specific rules
+          // win via findLast, so these override the "*" allow above. OPENCODE_YOLO=1
+          // bypasses these asks (see permission/index.ts).
+          bash: {
+            "*": "allow",
+            "brew *": "ask",
+            "npm install *": "ask",
+            "npm i *": "ask",
+            "npm ci*": "ask",
+            "pnpm add *": "ask",
+            "pnpm install *": "ask",
+            "pnpm i *": "ask",
+            "yarn add *": "ask",
+            "yarn global add *": "ask",
+            "bun add *": "ask",
+            "bun install *": "ask",
+            "pip install *": "ask",
+            "pip3 install *": "ask",
+            "pipx install *": "ask",
+            "cargo install *": "ask",
+            "cargo add *": "ask",
+            "gem install *": "ask",
+            "go install *": "ask",
+            "apt install *": "ask",
+            "apt-get install *": "ask",
+            "dnf install *": "ask",
+            "yum install *": "ask",
+            "curl *": "ask",
+            "wget *": "ask",
+            "sudo *": "ask",
+            "rm -rf *": "ask",
+          },
         })
 
         const user = Permission.fromConfig(cfg.permission ?? {})

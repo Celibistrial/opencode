@@ -67,6 +67,10 @@ const layer = Layer.effect(
     const ask = Effect.fn("Permission.ask")(function* (input: PermissionV1.AskInput) {
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
+      // YOLO mode: auto-approve every prompt (installs, edits, webfetch, MCP tools, external
+      // dirs). Explicit `deny` rules are still honored so internal control-flow (question /
+      // plan gating) keeps working — yolo turns "ask" into "allow", not "deny" into "allow".
+      const yolo = process.env.OPENCODE_YOLO === "1" || process.env.OPENCODE_YOLO === "true"
       let needsAsk = false
 
       for (const pattern of request.patterns) {
@@ -78,6 +82,7 @@ const layer = Layer.effect(
           })
         }
         if (rule.action === "allow") continue
+        if (yolo) continue
         needsAsk = true
       }
 
