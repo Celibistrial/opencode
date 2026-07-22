@@ -1263,7 +1263,12 @@ export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
     models[key] = fromModelsDevModel(provider, model)
     for (const [mode, opts] of Object.entries(model.experimental?.modes ?? {})) {
       const id = `${model.id}-${mode}`
-      const base = fromModelsDevModel(provider, model)
+      // Reuse the model already built above instead of rebuilding it (which would
+      // re-run the expensive ProviderTransform.reasoningVariants/variants work).
+      // The base is only spread into a fresh object and overridden below; the whole
+      // catalog is deep-cloned into `database` before any mutation, so sharing
+      // nested references here is safe.
+      const base = models[key]
       models[id] = {
         ...base,
         id: ModelV2.ID.make(id),
