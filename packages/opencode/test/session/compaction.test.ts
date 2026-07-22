@@ -664,7 +664,8 @@ describe("session.compaction.prune", () => {
             state: {
               status: "completed",
               input: {},
-              output: "x".repeat(200_000),
+              // ~75k estimated tokens, above the PRUNE_TRIGGER high-water mark so a prune pass fires.
+              output: "x".repeat(300_000),
               title: "done",
               metadata: {},
               time: { start: Date.now(), end: Date.now() },
