@@ -333,7 +333,16 @@ const layer = Layer.effect(
             return
 
           case "tool-input-delta":
-            yield* ensureToolCall(value)
+            // ensureToolCall's only effect here is to CREATE the tool part if a
+            // preceding tool-input-start was missed — the returned part is
+            // discarded and the delta text is not accumulated anywhere. When the
+            // call already exists in ctx.toolcalls, ensureToolCall would run a
+            // getPart DB SELECT only to return a part nobody reads. Tool arguments
+            // stream as many deltas, so that fired one wasted query per chunk on
+            // the streaming hot path. Skip it when the in-memory record exists; the
+            // part is only consumed at tool-input-end/tool-call, which still call
+            // ensureToolCall unconditionally (preserving self-heal of a deleted part).
+            if (!ctx.toolcalls[value.id]) yield* ensureToolCall(value)
             return
 
           case "tool-input-end": {
@@ -669,6 +678,10 @@ const layer = Layer.effect(
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
+            // Reset the streaming delta buffer too, so a retry doesn't prepend the
+            // previous attempt's unflushed text onto the new attempt's first delta.
+            ctx.deltaBuf = ""
+            ctx.deltaLast = 0
             yield* status.set(ctx.sessionID, { type: "busy" })
             const stream = llm.stream(streamInput)
 
