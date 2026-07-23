@@ -72,9 +72,20 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
+  deltaBuf: string
+  deltaLast: number
 }
 
 type StreamEvent = LLMEvent
+
+// Server-side delta coalescing. Publishing a PartDelta event per streamed token drives
+// the Effect event bus + SSE/RPC fan-out, which dominates streaming CPU (~23% of a core
+// for a normal chat response). Buffer incremental text and publish a merged delta on a
+// size/time threshold instead of per token; the full text is still written durably at
+// text-end (updatePart) so the final state is exact. OPENCODE_STREAM_COALESCE_MS=0
+// restores per-token publishing.
+const STREAM_COALESCE_MS = Math.max(0, Math.min(500, Number(process.env["OPENCODE_STREAM_COALESCE_MS"]) || 90))
+const STREAM_COALESCE_CHARS = 80
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionProcessor") {}
 
@@ -111,34 +122,10 @@ const layer = Layer.effect(
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        deltaBuf: "",
+        deltaLast: 0,
       }
       let aborted = false
-
-      // Server-side delta coalescing. Publishing a PartDelta event per streamed token
-      // drives the Effect event bus + SSE/RPC fan-out, which dominates streaming CPU
-      // (~23% of a core for a normal chat response). Buffer incremental text and publish
-      // a merged delta on a size/time threshold instead of per token; the full text is
-      // still written durably at text-end (updatePart), so the final state is exact.
-      // OPENCODE_STREAM_COALESCE_MS=0 restores per-token publishing.
-      const COALESCE_MS = Math.max(0, Math.min(500, Number(process.env["OPENCODE_STREAM_COALESCE_MS"]) || 90))
-      const COALESCE_CHARS = 80
-      let deltaBuf = ""
-      let deltaLast = 0
-      const flushTextDelta = Effect.fnUntraced(function* () {
-        if (!deltaBuf || !ctx.currentText) {
-          deltaBuf = ""
-          return
-        }
-        const delta = deltaBuf
-        deltaBuf = ""
-        yield* session.updatePartDelta({
-          sessionID: ctx.currentText.sessionID,
-          messageID: ctx.currentText.messageID,
-          partID: ctx.currentText.id,
-          field: "text",
-          delta,
-        })
-      })
 
       const parse = (e: unknown) =>
         MessageV2.fromError(e, {
@@ -526,19 +513,37 @@ const layer = Layer.effect(
             if (!ctx.currentText) return
             ctx.currentText.text += value.text
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
-            deltaBuf += value.text
+            ctx.deltaBuf += value.text
             {
               const now = Date.now()
-              if (deltaBuf.length >= COALESCE_CHARS || now - deltaLast >= COALESCE_MS) {
-                deltaLast = now
-                yield* flushTextDelta()
+              if (ctx.deltaBuf.length >= STREAM_COALESCE_CHARS || now - ctx.deltaLast >= STREAM_COALESCE_MS) {
+                const delta = ctx.deltaBuf
+                ctx.deltaBuf = ""
+                ctx.deltaLast = now
+                yield* session.updatePartDelta({
+                  sessionID: ctx.currentText.sessionID,
+                  messageID: ctx.currentText.messageID,
+                  partID: ctx.currentText.id,
+                  field: "text",
+                  delta,
+                })
               }
             }
             return
 
           case "text-end":
             if (!ctx.currentText) return
-            yield* flushTextDelta()
+            if (ctx.deltaBuf) {
+              const delta = ctx.deltaBuf
+              ctx.deltaBuf = ""
+              yield* session.updatePartDelta({
+                sessionID: ctx.currentText.sessionID,
+                messageID: ctx.currentText.messageID,
+                partID: ctx.currentText.id,
+                field: "text",
+                delta,
+              })
+            }
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
             ctx.currentText.text = ctx.currentText.text
             ctx.currentText.text = (yield* plugin.trigger(
