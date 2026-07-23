@@ -394,6 +394,21 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   const attention = createTuiAttention({ renderer, config: tuiConfig, kv })
   const clipboard = useClipboard()
 
+  // Dynamic frame rate. While a session is streaming, the render loop free-runs at
+  // targetFps and re-lays-out the growing message every frame — the bulk of TUI
+  // streaming CPU. Content updates are already throttled by the flush coalescer, so
+  // drop to a low rate while any session is busy and restore the full rate when idle,
+  // keeping scrolling/reading smooth. Tunable via OPENCODE_TUI_STREAM_FPS.
+  const STREAM_FPS = Math.min(TUI_FPS, Math.max(5, Number(process.env["OPENCODE_TUI_STREAM_FPS"]) || 20))
+  createEffect(() => {
+    const streaming = Object.values(sync.data.session_status ?? {}).some((s) => s?.type === "busy")
+    const fps = streaming ? STREAM_FPS : TUI_FPS
+    if (renderer.targetFps !== fps) {
+      renderer.targetFps = fps
+      renderer.maxFps = fps
+    }
+  })
+
   const api = createTuiApi(
     createTuiApiAdapters({
       version: InstallationVersion,
