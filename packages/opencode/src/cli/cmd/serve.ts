@@ -19,6 +19,11 @@ export const ServeCommand = effectCmd({
     const server = yield* Effect.promise(() => Server.listen(opts))
     console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
 
+    // Debug-only: exit after N ms so a CPU profiler can flush its output.
+    if (process.env["OPENCODE_PROF_EXIT_MS"]) {
+      setTimeout(() => process.exit(0), Number(process.env["OPENCODE_PROF_EXIT_MS"]))
+    }
+
     yield* Effect.never
   }),
 })
