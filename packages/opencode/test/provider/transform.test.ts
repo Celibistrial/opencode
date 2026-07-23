@@ -7,6 +7,49 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { jsonSchema } from "ai"
 
+describe("ProviderTransform.sanitizeSurrogates - guarded fast-path equivalence", () => {
+  // Reference: the original unguarded replace. The guarded implementation must be
+  // byte-identical to this for every input, only faster on surrogate-free strings.
+  const reference = (s: string) =>
+    s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�")
+
+  const cases: Array<[string, string]> = [
+    ["empty", ""],
+    ["ascii", "hello world"],
+    ["bmp non-ascii", "café — naïve — Ω ≈ ∑"],
+    ["valid emoji (surrogate pair)", "grin 😀 rocket 🚀 family 👨‍👩‍👧"],
+    ["valid pair repeated", "🚀".repeat(100)],
+    ["lone high surrogate", "before\uD83Dafter"],
+    ["lone low surrogate", "before\uDE00after"],
+    ["lone high at end", "trailing\uD83D"],
+    ["lone low at start", "\uDE00leading"],
+    ["pair then lone high", "😀\uD83D"],
+    ["lone high then pair", "\uD83D😀"],
+    ["two lone highs", "\uD83D\uD83D"],
+    ["two lone lows", "\uDE00\uDE00"],
+    ["mixed valid + lone", "ok 😀 bad \uD83D end \uDE00 done"],
+    ["replacement char already present", "keep � as-is 😀"],
+  ]
+
+  for (const [name, input] of cases) {
+    test(name, () => {
+      expect(ProviderTransform.sanitizeSurrogates(input)).toBe(reference(input))
+    })
+  }
+
+  test("randomized fuzz vs reference", () => {
+    const alphabet = ["a", " ", "é", "Ω", "😀", "🚀", "\uD83D", "\uDE00", "�", "\n"]
+    let seed = 123456789
+    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    for (let i = 0; i < 2000; i++) {
+      const len = Math.floor(rand() * 20)
+      let s = ""
+      for (let j = 0; j < len; j++) s += alphabet[Math.floor(rand() * alphabet.length)]
+      expect(ProviderTransform.sanitizeSurrogates(s)).toBe(reference(s))
+    }
+  })
+})
+
 describe("ProviderTransform.options - setCacheKey", () => {
   const sessionID = "test-session-123"
 
