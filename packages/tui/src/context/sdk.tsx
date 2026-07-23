@@ -50,12 +50,14 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     let last = 0
     const retryDelay = 1000
     const maxRetryDelay = 30000
-    // Coalesce streaming event batches. Every flush triggers a full render
-    // (relayout + repaint + markdown re-parse + native diff) AND a terminal repaint,
-    // so fewer flushes = less CPU both here and in the terminal emulator. ~20fps
-    // (48ms) is still smooth for streaming text (which isn't animation) and roughly
-    // a third fewer frames than 30fps. Tunable via OPENCODE_TUI_FLUSH_MS.
-    const FLUSH_INTERVAL_MS = Math.max(16, Math.min(200, Number(process.env["OPENCODE_TUI_FLUSH_MS"]) || 48))
+    // Coalesce streaming event batches. Every flush triggers a full render, whose
+    // dominant cost is re-parsing the ENTIRE growing assistant message (roughly O(N)
+    // per flush, so O(N*flushes) over a stream) — this is what pins a core on long
+    // responses. Fewer flushes cut that cost near-linearly. 64ms (~15fps) is still
+    // smooth for streaming text (text isn't animation) and ~4x fewer re-parses than
+    // the old 16ms cadence. Tunable via OPENCODE_TUI_FLUSH_MS (raise to 80-100 for
+    // very long responses on heavy terminals; lower to 33 for max fluidity).
+    const FLUSH_INTERVAL_MS = Math.max(16, Math.min(200, Number(process.env["OPENCODE_TUI_FLUSH_MS"]) || 64))
 
     const flush = () => {
       if (queue.length === 0) return
