@@ -18,13 +18,19 @@ export function adapterState() {
   }
 }
 
+// Compile the schema validators ONCE. `Schema.is(schema)` rebuilds the refinement
+// function on every call, and these run per streamed token — recompiling per token
+// was a major chunk of streaming CPU. Hoisting makes it a cheap function call.
+const isFinishReason = Schema.is(FinishReason)
+const isProviderMetadata = Schema.is(ProviderMetadata)
+
 function finishReason(value: string | undefined): FinishReason {
-  return Schema.is(FinishReason)(value) ? value : "unknown"
+  return isFinishReason(value) ? value : "unknown"
 }
 
 function providerMetadata(value: unknown): ProviderMetadata | undefined {
   if (value == null) return undefined
-  return Schema.is(ProviderMetadata)(value) ? value : undefined
+  return isProviderMetadata(value) ? value : undefined
 }
 
 // Temporary AI SDK bridge: Copilot billing survives only in raw provider chunks here.
