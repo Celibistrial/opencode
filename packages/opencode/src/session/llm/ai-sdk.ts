@@ -1,5 +1,5 @@
 import { FinishReason, LLMEvent, ProviderMetadata, ToolResultValue } from "@opencode-ai/llm"
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import { type streamText } from "ai"
 import { errorMessage } from "@/util/error"
 
@@ -82,211 +82,202 @@ function currentReasoningID(state: ReturnType<typeof adapterState>, id: string |
 export function toLLMEvents(
   state: ReturnType<typeof adapterState>,
   event: AISDKEvent,
-): Effect.Effect<ReadonlyArray<LLMEvent>, unknown> {
+): ReadonlyArray<LLMEvent> {
   switch (event.type) {
     case "start":
-      return Effect.succeed([])
+      return []
 
     case "start-step":
-      return Effect.succeed([LLMEvent.stepStart({ index: state.step })])
+      return [LLMEvent.stepStart({ index: state.step })]
 
-    case "finish-step":
-      return Effect.sync(() => {
-        const original = providerMetadata(event.providerMetadata)
-        const metadata =
-          state.copilotTotalNanoAiu === undefined
-            ? original
-            : {
-                ...original,
-                copilot: {
-                  ...original?.copilot,
-                  totalNanoAiu: state.copilotTotalNanoAiu,
-                },
-              }
-        state.copilotTotalNanoAiu = undefined
-        return [
-          LLMEvent.stepFinish({
-            index: state.step++,
-            reason: finishReason(event.finishReason),
-            usage: usage(event.usage),
-            providerMetadata: metadata,
-          }),
-        ]
-      })
+    case "finish-step": {
+      const original = providerMetadata(event.providerMetadata)
+      const metadata =
+        state.copilotTotalNanoAiu === undefined
+          ? original
+          : {
+              ...original,
+              copilot: {
+                ...original?.copilot,
+                totalNanoAiu: state.copilotTotalNanoAiu,
+              },
+            }
+      state.copilotTotalNanoAiu = undefined
+      return [
+        LLMEvent.stepFinish({
+          index: state.step++,
+          reason: finishReason(event.finishReason),
+          usage: usage(event.usage),
+          providerMetadata: metadata,
+        }),
+      ]
+    }
 
-    case "finish":
-      return Effect.sync(() => {
-        const events = [
-          LLMEvent.finish({
-            reason: finishReason(event.finishReason),
-            usage: usage(event.totalUsage),
-            providerMetadata: "providerMetadata" in event ? providerMetadata(event.providerMetadata) : undefined,
-          }),
-        ]
-        // Reset so the adapter can be reused for a follow-up stream without leaking
-        // counters or block IDs. adapterState() is the single source of truth for shape.
-        Object.assign(state, adapterState())
-        return events
-      })
+    case "finish": {
+      const events = [
+        LLMEvent.finish({
+          reason: finishReason(event.finishReason),
+          usage: usage(event.totalUsage),
+          providerMetadata: "providerMetadata" in event ? providerMetadata(event.providerMetadata) : undefined,
+        }),
+      ]
+      // Reset so the adapter can be reused for a follow-up stream without leaking
+      // counters or block IDs. adapterState() is the single source of truth for shape.
+      Object.assign(state, adapterState())
+      return events
+    }
 
-    case "text-start":
-      return Effect.sync(() => {
-        state.currentTextID = currentTextID(state, event.id)
-        return [
-          LLMEvent.textStart({
-            id: state.currentTextID,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "text-start": {
+      state.currentTextID = currentTextID(state, event.id)
+      return [
+        LLMEvent.textStart({
+          id: state.currentTextID,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
     case "text-delta":
-      return Effect.succeed([
+      return [
         LLMEvent.textDelta({
           id: currentTextID(state, event.id),
           text: event.text,
           providerMetadata: providerMetadata(event.providerMetadata),
         }),
-      ])
+      ]
 
-    case "text-end":
-      return Effect.sync(() => {
-        const id = currentTextID(state, event.id)
-        state.currentTextID = undefined
-        return [
-          LLMEvent.textEnd({
-            id,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "text-end": {
+      const id = currentTextID(state, event.id)
+      state.currentTextID = undefined
+      return [
+        LLMEvent.textEnd({
+          id,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
-    case "reasoning-start":
-      return Effect.sync(() => {
-        state.currentReasoningID = currentReasoningID(state, event.id)
-        return [
-          LLMEvent.reasoningStart({
-            id: state.currentReasoningID,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "reasoning-start": {
+      state.currentReasoningID = currentReasoningID(state, event.id)
+      return [
+        LLMEvent.reasoningStart({
+          id: state.currentReasoningID,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
     case "reasoning-delta":
-      return Effect.succeed([
+      return [
         LLMEvent.reasoningDelta({
           id: currentReasoningID(state, event.id),
           text: event.text,
           providerMetadata: providerMetadata(event.providerMetadata),
         }),
-      ])
+      ]
 
-    case "reasoning-end":
-      return Effect.sync(() => {
-        const id = currentReasoningID(state, event.id)
-        state.currentReasoningID = undefined
-        return [
-          LLMEvent.reasoningEnd({
-            id,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "reasoning-end": {
+      const id = currentReasoningID(state, event.id)
+      state.currentReasoningID = undefined
+      return [
+        LLMEvent.reasoningEnd({
+          id,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
-    case "tool-input-start":
-      return Effect.sync(() => {
-        state.toolNames[event.id] = event.toolName
-        return [
-          LLMEvent.toolInputStart({
-            id: event.id,
-            name: event.toolName,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "tool-input-start": {
+      state.toolNames[event.id] = event.toolName
+      return [
+        LLMEvent.toolInputStart({
+          id: event.id,
+          name: event.toolName,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
     case "tool-input-delta":
-      return Effect.succeed([
+      return [
         LLMEvent.toolInputDelta({
           id: event.id,
           name: state.toolNames[event.id] ?? "unknown",
           text: event.delta ?? "",
         }),
-      ])
+      ]
 
     case "tool-input-end":
-      return Effect.succeed([
+      return [
         LLMEvent.toolInputEnd({
           id: event.id,
           name: state.toolNames[event.id] ?? "unknown",
           providerMetadata: providerMetadata(event.providerMetadata),
         }),
-      ])
+      ]
 
-    case "tool-call":
-      return Effect.sync(() => {
-        state.toolNames[event.toolCallId] = event.toolName
-        return [
-          LLMEvent.toolCall({
-            id: event.toolCallId,
-            name: event.toolName,
-            input: event.input,
-            providerExecuted: "providerExecuted" in event ? event.providerExecuted : undefined,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "tool-call": {
+      state.toolNames[event.toolCallId] = event.toolName
+      return [
+        LLMEvent.toolCall({
+          id: event.toolCallId,
+          name: event.toolName,
+          input: event.input,
+          providerExecuted: "providerExecuted" in event ? event.providerExecuted : undefined,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
-    case "tool-result":
-      return Effect.sync(() => {
-        const name = state.toolNames[event.toolCallId] ?? "unknown"
-        delete state.toolNames[event.toolCallId]
-        return [
-          LLMEvent.toolResult({
-            id: event.toolCallId,
-            name,
-            result: ToolResultValue.make(event.output),
-            providerExecuted: "providerExecuted" in event ? event.providerExecuted : undefined,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "tool-result": {
+      const name = state.toolNames[event.toolCallId] ?? "unknown"
+      delete state.toolNames[event.toolCallId]
+      return [
+        LLMEvent.toolResult({
+          id: event.toolCallId,
+          name,
+          result: ToolResultValue.make(event.output),
+          providerExecuted: "providerExecuted" in event ? event.providerExecuted : undefined,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
-    case "tool-error":
-      return Effect.sync(() => {
-        const name = state.toolNames[event.toolCallId] ?? ("toolName" in event ? event.toolName : "unknown")
-        delete state.toolNames[event.toolCallId]
-        return [
-          LLMEvent.toolError({
-            id: event.toolCallId,
-            name,
-            message: errorMessage(event.error),
-            error: event.error,
-            providerMetadata: providerMetadata(event.providerMetadata),
-          }),
-        ]
-      })
+    case "tool-error": {
+      const name = state.toolNames[event.toolCallId] ?? ("toolName" in event ? event.toolName : "unknown")
+      delete state.toolNames[event.toolCallId]
+      return [
+        LLMEvent.toolError({
+          id: event.toolCallId,
+          name,
+          message: errorMessage(event.error),
+          error: event.error,
+          providerMetadata: providerMetadata(event.providerMetadata),
+        }),
+      ]
+    }
 
+    // A stream error is surfaced by throwing; the processor's stream pipeline
+    // squashes the resulting defect into a typed failure for retry/halt handling.
     case "error":
-      return Effect.fail(event.error)
+      throw event.error
 
     case "abort":
     case "source":
     case "file":
     case "tool-output-denied":
     case "tool-approval-request":
-      return Effect.succeed([])
+      return []
 
-    case "raw":
-      return Effect.sync(() => {
-        state.copilotTotalNanoAiu = copilotTotalNanoAiu(event.rawValue) ?? state.copilotTotalNanoAiu
-        return []
-      })
+    case "raw": {
+      state.copilotTotalNanoAiu = copilotTotalNanoAiu(event.rawValue) ?? state.copilotTotalNanoAiu
+      return []
+    }
 
     default: {
       const _exhaustive: never = event
       void _exhaustive
-      return Effect.succeed([])
+      return []
     }
   }
 }

@@ -373,8 +373,9 @@ const live: Layer.Layer<
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
-              Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
-              Stream.flatMap((events) => Stream.fromIterable(events)),
+              // toLLMEvents is pure/sync — mapConcat avoids scheduling an Effect fiber
+              // per streamed token (mapEffect + flatMap did), a major streaming-CPU cost.
+              Stream.mapConcat((event) => LLMAISDK.toLLMEvents(state, event)),
             )
           }),
         ),
