@@ -50,14 +50,21 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     let last = 0
     const retryDelay = 1000
     const maxRetryDelay = 30000
-    // Coalesce streaming event batches. Every flush triggers a full render, whose
-    // dominant cost is re-parsing the ENTIRE growing assistant message (roughly O(N)
-    // per flush, so O(N*flushes) over a stream) — this is what pins a core on long
-    // responses. Fewer flushes cut that cost near-linearly. 64ms (~15fps) is still
-    // smooth for streaming text (text isn't animation) and ~4x fewer re-parses than
-    // the old 16ms cadence. Tunable via OPENCODE_TUI_FLUSH_MS (raise to 80-100 for
-    // very long responses on heavy terminals; lower to 33 for max fluidity).
-    const FLUSH_INTERVAL_MS = Math.max(16, Math.min(200, Number(process.env["OPENCODE_TUI_FLUSH_MS"]) || 64))
+    // ADAPTIVE coalescing of streaming events. opentui re-lays-out the ENTIRE growing
+    // assistant message on every content update (updateLayout dominates CPU, ~O(N) per
+    // flush → O(N*flushes) per stream), which is what pins a core on long responses.
+    // We throttle flushes MORE as the active message grows: short replies stay snappy
+    // (~48ms), a huge message backs off toward ~400ms, cutting re-layouts up to ~8x on
+    // long/code-heavy streams. This does NOT touch scrolling (scroll doesn't flush
+    // content) — frame-rate/scroll smoothness is the separate targetFps knob. streamChars
+    // resets after an idle gap so each new message starts snappy again.
+    // OPENCODE_TUI_FLUSH_MS pins a fixed interval (disables adaptivity) if set.
+    const FLUSH_OVERRIDE = Math.max(0, Math.min(1000, Number(process.env["OPENCODE_TUI_FLUSH_MS"]) || 0))
+    const FLUSH_MIN = 48
+    const FLUSH_MAX = 400
+    let streamChars = 0
+    const flushInterval = () =>
+      FLUSH_OVERRIDE || Math.max(FLUSH_MIN, Math.min(FLUSH_MAX, FLUSH_MIN + Math.floor(streamChars / 60)))
 
     const flush = () => {
       if (queue.length === 0) return
@@ -74,14 +81,21 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     }
 
     const handleEvent = (event: GlobalEvent) => {
+      const now = Date.now()
+      // Reset the adaptive backoff once streaming pauses (new message starts fresh/snappy).
+      if (now - last > 1500) streamChars = 0
+      const delta = (event as any).payload?.properties?.delta
+      if (typeof delta === "string") streamChars += delta.length
+
       queue.push(event)
-      const elapsed = Date.now() - last
+      const elapsed = now - last
 
       if (timer) return
       // If we just flushed recently, batch this with future events into the next
       // frame; otherwise flush immediately to avoid first-token latency.
-      if (elapsed < FLUSH_INTERVAL_MS) {
-        timer = setTimeout(flush, FLUSH_INTERVAL_MS)
+      const interval = flushInterval()
+      if (elapsed < interval) {
+        timer = setTimeout(flush, interval)
         return
       }
       flush()

@@ -95,7 +95,7 @@ registerOpencodeSpinner()
 // that paint load with no perceptible loss for a text UI. `maxFps` caps the
 // burst/immediate-rerender path too. Tunable via OPENCODE_TUI_FPS for terminals
 // that need to go lower (e.g. heavy GPU emulators, tmux, ssh).
-const TUI_FPS = Math.max(5, Math.min(60, Number(process.env["OPENCODE_TUI_FPS"]) || 30))
+const TUI_FPS = Math.max(5, Math.min(60, Number(process.env["OPENCODE_TUI_FPS"]) || 60))
 
 const appGlobalBindingCommands = [
   "session.list",
