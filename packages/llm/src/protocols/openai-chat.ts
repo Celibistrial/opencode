@@ -118,6 +118,12 @@ const OpenAIChatUsage = Schema.Struct({
   prompt_tokens: Schema.optional(Schema.Number),
   completion_tokens: Schema.optional(Schema.Number),
   total_tokens: Schema.optional(Schema.Number),
+  // DeepSeek reports cache accounting as top-level hit/miss counts instead of
+  // OpenAI's `prompt_tokens_details.cached_tokens`. Model them so the cache-read
+  // breakdown is not silently dropped for DeepSeek (and any openai-compatible
+  // provider using the same convention).
+  prompt_cache_hit_tokens: Schema.optional(Schema.Number),
+  prompt_cache_miss_tokens: Schema.optional(Schema.Number),
   prompt_tokens_details: optionalNull(
     Schema.Struct({
       cached_tokens: Schema.optional(Schema.Number),
@@ -390,7 +396,9 @@ const mapFinishReason = (reason: string | null | undefined): FinishReason => {
 // satisfied on both sides.
 const mapUsage = (usage: OpenAIChatEvent["usage"]): Usage | undefined => {
   if (!usage) return undefined
-  const cached = usage.prompt_tokens_details?.cached_tokens
+  // Prefer OpenAI's nested cached_tokens; fall back to DeepSeek's top-level
+  // prompt_cache_hit_tokens so cacheReadInputTokens/nonCachedInputTokens are correct.
+  const cached = usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens
   const reasoning = usage.completion_tokens_details?.reasoning_tokens
   const nonCached = ProviderShared.subtractTokens(usage.prompt_tokens, cached)
   return new Usage({
@@ -404,60 +412,59 @@ const mapUsage = (usage: OpenAIChatEvent["usage"]): Usage | undefined => {
   })
 }
 
-const step = (state: ParserState, event: OpenAIChatEvent) =>
-  Effect.gen(function* () {
-    const events: LLMEvent[] = []
-    const usage = mapUsage(event.usage) ?? state.usage
-    const choice = event.choices[0]
-    const finishReason = choice?.finish_reason ? mapFinishReason(choice.finish_reason) : state.finishReason
-    const delta = choice?.delta
-    const toolDeltas = delta?.tool_calls ?? []
-    let tools = state.tools
+const step = (state: ParserState, event: OpenAIChatEvent): readonly [ParserState, ReadonlyArray<LLMEvent>] => {
+  const events: LLMEvent[] = []
+  const usage = mapUsage(event.usage) ?? state.usage
+  const choice = event.choices[0]
+  const finishReason = choice?.finish_reason ? mapFinishReason(choice.finish_reason) : state.finishReason
+  const delta = choice?.delta
+  const toolDeltas = delta?.tool_calls ?? []
+  let tools = state.tools
 
-    let lifecycle = state.lifecycle
+  let lifecycle = state.lifecycle
 
-    if (delta?.reasoning_content)
-      lifecycle = Lifecycle.reasoningDelta(lifecycle, events, "reasoning-0", delta.reasoning_content)
+  if (delta?.reasoning_content)
+    lifecycle = Lifecycle.reasoningDelta(lifecycle, events, "reasoning-0", delta.reasoning_content)
 
-    if (delta?.content) {
-      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
-      lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", delta.content)
-    }
+  if (delta?.content) {
+    lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
+    lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", delta.content)
+  }
 
-    if (toolDeltas.length) lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
+  if (toolDeltas.length) lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
 
-    for (const tool of toolDeltas) {
-      const result = ToolStream.appendOrStart(
-        ADAPTER,
-        tools,
-        tool.index,
-        { id: tool.id ?? undefined, name: tool.function?.name ?? undefined, text: tool.function?.arguments ?? "" },
-        "OpenAI Chat tool call delta is missing id or name",
-      )
-      if (ToolStream.isError(result)) return yield* result
-      tools = result.tools
-      if (result.events.length) lifecycle = Lifecycle.stepStart(lifecycle, events)
-      events.push(...result.events)
-    }
+  for (const tool of toolDeltas) {
+    const result = ToolStream.appendOrStart(
+      ADAPTER,
+      tools,
+      tool.index,
+      { id: tool.id ?? undefined, name: tool.function?.name ?? undefined, text: tool.function?.arguments ?? "" },
+      "OpenAI Chat tool call delta is missing id or name",
+    )
+    if (ToolStream.isError(result)) throw result
+    tools = result.tools
+    if (result.events.length) lifecycle = Lifecycle.stepStart(lifecycle, events)
+    events.push(...result.events)
+  }
 
-    // Finalize accumulated tool inputs eagerly when finish_reason arrives so
-    // JSON parse failures fail the stream at the boundary rather than at halt.
-    const finished =
-      finishReason !== undefined && state.finishReason === undefined && Object.keys(tools).length > 0
-        ? yield* ToolStream.finishAll(ADAPTER, tools)
-        : undefined
+  // Finalize accumulated tool inputs eagerly when finish_reason arrives so
+  // JSON parse failures fail the stream at the boundary rather than at halt.
+  const finished =
+    finishReason !== undefined && state.finishReason === undefined && Object.keys(tools).length > 0
+      ? ToolStream.finishAll(ADAPTER, tools)
+      : undefined
 
-    return [
-      {
-        tools: finished?.tools ?? tools,
-        toolCallEvents: finished?.events ?? state.toolCallEvents,
-        usage,
-        finishReason,
-        lifecycle,
-      },
-      events,
-    ] as const
-  })
+  return [
+    {
+      tools: finished?.tools ?? tools,
+      toolCallEvents: finished?.events ?? state.toolCallEvents,
+      usage,
+      finishReason,
+      lifecycle,
+    },
+    events,
+  ] as const
+}
 
 const finishEvents = (state: ParserState): ReadonlyArray<LLMEvent> => {
   const events: LLMEvent[] = []

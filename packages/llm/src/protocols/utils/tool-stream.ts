@@ -1,6 +1,5 @@
-import { Effect } from "effect"
 import { LLMError, LLMEvent, type ProviderMetadata, type ToolCall } from "../../schema"
-import { eventError, parseToolInput, type ToolAccumulator } from "../shared"
+import { eventError, parseToolInputSync, type ToolAccumulator } from "../shared"
 
 type StreamKey = string | number
 
@@ -63,19 +62,14 @@ const inputDelta = (tool: PendingTool, text: string) =>
     text,
   })
 
-const toolCall = (route: string, tool: PendingTool, inputOverride?: string) =>
-  parseToolInput(route, tool.name, inputOverride ?? tool.input).pipe(
-    Effect.map(
-      (input): ToolCall =>
-        LLMEvent.toolCall({
-          id: tool.id,
-          name: tool.name,
-          input,
-          providerExecuted: tool.providerExecuted ? true : undefined,
-          providerMetadata: tool.providerMetadata,
-        }),
-    ),
-  )
+const toolCall = (route: string, tool: PendingTool, inputOverride?: string): ToolCall =>
+  LLMEvent.toolCall({
+    id: tool.id,
+    name: tool.name,
+    input: parseToolInputSync(route, tool.name, inputOverride ?? tool.input),
+    providerExecuted: tool.providerExecuted ? true : undefined,
+    providerMetadata: tool.providerMetadata,
+  })
 
 /** Store the updated tool and produce the optional public delta event. */
 const appendTool = <K extends StreamKey>(
@@ -161,58 +155,51 @@ export const appendExisting = <K extends StreamKey>(
  * from state, and return the optional public `tool-call` event. Missing keys are
  * a no-op because some providers emit stop events for non-tool content blocks.
  */
-export const finish = <K extends StreamKey>(route: string, tools: State<K>, key: K) =>
-  Effect.gen(function* () {
-    const tool = tools[key]
-    if (!tool) return { tools }
-    return {
-      tools: withoutTool(tools, key),
-      events: [
-        LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
-        yield* toolCall(route, tool),
-      ],
-    }
-  })
+export const finish = <K extends StreamKey>(route: string, tools: State<K>, key: K) => {
+  const tool = tools[key]
+  if (!tool) return { tools }
+  return {
+    tools: withoutTool(tools, key),
+    events: [
+      LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
+      toolCall(route, tool),
+    ],
+  }
+}
 
 /**
  * Finalize one pending tool call with an authoritative final input string.
  * OpenAI Responses can send accumulated deltas and then repeat the completed
  * arguments on `response.output_item.done`; the final value wins.
  */
-export const finishWithInput = <K extends StreamKey>(route: string, tools: State<K>, key: K, input: string) =>
-  Effect.gen(function* () {
-    const tool = tools[key]
-    if (!tool) return { tools }
-    return {
-      tools: withoutTool(tools, key),
-      events: [
-        LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
-        yield* toolCall(route, tool, input),
-      ],
-    }
-  })
+export const finishWithInput = <K extends StreamKey>(route: string, tools: State<K>, key: K, input: string) => {
+  const tool = tools[key]
+  if (!tool) return { tools }
+  return {
+    tools: withoutTool(tools, key),
+    events: [
+      LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
+      toolCall(route, tool, input),
+    ],
+  }
+}
 
 /**
  * Finalize every pending tool call at once. OpenAI Chat has this shape: it does
  * not emit per-tool stop events, so all accumulated calls finish when the choice
  * receives a terminal `finish_reason`.
  */
-export const finishAll = <K extends StreamKey>(route: string, tools: State<K>) =>
-  Effect.gen(function* () {
-    const pending = Object.values<PendingTool | undefined>(tools).filter(
-      (tool): tool is PendingTool => tool !== undefined,
-    )
-    return {
-      tools: empty<K>(),
-      events: yield* Effect.forEach(pending, (tool) =>
-        toolCall(route, tool).pipe(
-          Effect.map((call) => [
-            LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
-            call,
-          ]),
-        ),
-      ).pipe(Effect.map((events) => events.flat())),
-    }
-  })
+export const finishAll = <K extends StreamKey>(route: string, tools: State<K>) => {
+  const pending = Object.values<PendingTool | undefined>(tools).filter(
+    (tool): tool is PendingTool => tool !== undefined,
+  )
+  return {
+    tools: empty<K>(),
+    events: pending.flatMap((tool) => [
+      LLMEvent.toolInputEnd({ id: tool.id, name: tool.name, providerMetadata: tool.providerMetadata }),
+      toolCall(route, tool),
+    ]),
+  }
+}
 
 export * as ToolStream from "./tool-stream"

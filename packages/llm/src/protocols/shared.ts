@@ -6,6 +6,7 @@ import {
   InvalidProviderOutputReason,
   InvalidRequestReason,
   LLMError,
+  TransportReason,
   type ContentPart,
   type LLMRequest,
   type MediaPart,
@@ -94,11 +95,32 @@ export const eventError = (route: string, message: string, raw?: string) =>
     reason: new InvalidProviderOutputReason({ route, message, raw }),
   })
 
+// A failure while READING the response byte stream (connection reset, truncated
+// body) is a transport fault, not invalid provider output — model it as such so
+// downstream retry logic can treat it like any other transient transport error.
+export const streamReadError = (message: string, raw?: string) =>
+  new LLMError({
+    module: "ProviderShared",
+    method: "stream",
+    reason: new TransportReason({ message: raw ? `${message}: ${raw}` : message, kind: "StreamRead" }),
+  })
+
 export const parseJson = (route: string, input: string, message: string) =>
   Effect.try({
     try: () => decodeJson(input),
     catch: () => eventError(route, message, input),
   })
+
+// Synchronous variant used on the per-token streaming hot path (tool-call input
+// parsing). Throws the same typed `LLMError` the Effect variant fails with, so a
+// sync `step` can surface it as a stream defect that the transport re-types.
+export const parseJsonSync = (route: string, input: string, message: string) => {
+  try {
+    return decodeJson(input)
+  } catch {
+    throw eventError(route, message, input)
+  }
+}
 
 /**
  * Join the `text` field of a list of parts with newlines. Used by routes
@@ -154,6 +176,10 @@ export const wrappedSystemUpdate = Effect.fn("ProviderShared.wrappedSystemUpdate
  */
 export const parseToolInput = (route: string, name: string, raw: string) =>
   parseJson(route, raw || "{}", `Invalid JSON input for ${route} tool call ${name}`)
+
+/** Synchronous {@link parseToolInput}; throws the typed `LLMError` on invalid JSON. */
+export const parseToolInputSync = (route: string, name: string, raw: string) =>
+  parseJsonSync(route, raw || "{}", `Invalid JSON input for ${route} tool call ${name}`)
 
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
 export const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"] as const

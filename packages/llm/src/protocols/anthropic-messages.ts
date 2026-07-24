@@ -700,10 +700,7 @@ const onContentBlockStart = (state: ParserState, event: AnthropicEvent): StepRes
   return [{ ...state, lifecycle: Lifecycle.stepStart(state.lifecycle, events) }, [...events, result]]
 }
 
-const onContentBlockDelta = Effect.fn("AnthropicMessages.onContentBlockDelta")(function* (
-  state: ParserState,
-  event: AnthropicEvent,
-) {
+const onContentBlockDelta = (state: ParserState, event: AnthropicEvent): StepResult => {
   const delta = event.delta
 
   if (delta?.type === "text_delta" && delta.text) {
@@ -750,22 +747,19 @@ const onContentBlockDelta = Effect.fn("AnthropicMessages.onContentBlockDelta")(f
       delta.partial_json,
       "Anthropic Messages tool argument delta is missing its tool call",
     )
-    if (ToolStream.isError(result)) return yield* result
+    if (ToolStream.isError(result)) throw result
     const events: LLMEvent[] = []
     const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
     events.push(...result.events)
-    return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
+    return [{ ...state, lifecycle, tools: result.tools }, events]
   }
 
-  return [state, NO_EVENTS] satisfies StepResult
-})
+  return [state, NO_EVENTS]
+}
 
-const onContentBlockStop = Effect.fn("AnthropicMessages.onContentBlockStop")(function* (
-  state: ParserState,
-  event: AnthropicEvent,
-) {
-  if (event.index === undefined) return [state, NO_EVENTS] satisfies StepResult
-  const result = yield* ToolStream.finish(ADAPTER, state.tools, event.index)
+const onContentBlockStop = (state: ParserState, event: AnthropicEvent): StepResult => {
+  if (event.index === undefined) return [state, NO_EVENTS]
+  const result = ToolStream.finish(ADAPTER, state.tools, event.index)
   const events: LLMEvent[] = []
   const resultEvents = result.events ?? []
   const lifecycle = resultEvents.length
@@ -776,8 +770,8 @@ const onContentBlockStop = Effect.fn("AnthropicMessages.onContentBlockStop")(fun
         `reasoning-${event.index}`,
       )
   events.push(...resultEvents)
-  return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
-})
+  return [{ ...state, lifecycle, tools: result.tools }, events]
+}
 
 const onMessageDelta = (state: ParserState, event: AnthropicEvent): StepResult => {
   const usage = mergeUsage(state.usage, mapUsage(event.usage))
@@ -811,14 +805,14 @@ const onError = (state: ParserState, event: AnthropicEvent): StepResult => [
   ],
 ]
 
-const step = (state: ParserState, event: AnthropicEvent) => {
-  if (event.type === "message_start") return Effect.succeed(onMessageStart(state, event))
-  if (event.type === "content_block_start") return Effect.succeed(onContentBlockStart(state, event))
+const step = (state: ParserState, event: AnthropicEvent): StepResult => {
+  if (event.type === "message_start") return onMessageStart(state, event)
+  if (event.type === "content_block_start") return onContentBlockStart(state, event)
   if (event.type === "content_block_delta") return onContentBlockDelta(state, event)
   if (event.type === "content_block_stop") return onContentBlockStop(state, event)
-  if (event.type === "message_delta") return Effect.succeed(onMessageDelta(state, event))
-  if (event.type === "error") return Effect.succeed(onError(state, event))
-  return Effect.succeed<StepResult>([state, NO_EVENTS])
+  if (event.type === "message_delta") return onMessageDelta(state, event)
+  if (event.type === "error") return onError(state, event)
+  return [state, NO_EVENTS]
 }
 
 // =============================================================================

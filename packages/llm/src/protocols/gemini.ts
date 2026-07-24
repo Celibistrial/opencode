@@ -396,17 +396,14 @@ const finish = (state: ParserState): ReadonlyArray<LLMEvent> =>
       })()
     : []
 
-const step = (state: ParserState, event: GeminiEvent) => {
+const step = (state: ParserState, event: GeminiEvent): readonly [ParserState, ReadonlyArray<LLMEvent>] => {
   const nextState = {
     ...state,
     usage: event.usageMetadata ? (mapUsage(event.usageMetadata) ?? state.usage) : state.usage,
   }
   const candidate = event.candidates?.[0]
   if (!candidate?.content)
-    return Effect.succeed([
-      { ...nextState, finishReason: candidate?.finishReason ?? nextState.finishReason },
-      [],
-    ] as const)
+    return [{ ...nextState, finishReason: candidate?.finishReason ?? nextState.finishReason }, []] as const
 
   const events: LLMEvent[] = []
   let hasToolCalls = nextState.hasToolCalls
@@ -462,7 +459,7 @@ const step = (state: ParserState, event: GeminiEvent) => {
     }
   }
 
-  return Effect.succeed([
+  return [
     {
       ...nextState,
       hasToolCalls,
@@ -472,7 +469,7 @@ const step = (state: ParserState, event: GeminiEvent) => {
       finishReason: candidate.finishReason ?? nextState.finishReason,
     },
     events,
-  ] as const)
+  ] as const
 }
 
 // =============================================================================

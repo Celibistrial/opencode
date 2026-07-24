@@ -218,8 +218,14 @@ export interface MakeTransportInput<Body, Prepared, Frame, Event, State> {
 }
 
 const streamError = (route: string, message: string, cause: Cause.Cause<unknown>) => {
-  const failed = cause.reasons.find(Cause.isFailReason)?.error
-  if (failed instanceof LLMErrorClass) return failed
+  for (const reason of cause.reasons) {
+    // The sync `step`/decode surface a typed LLMError as a thrown defect (Die);
+    // errors raised through the Effect channel surface as Fail. Recover either so
+    // the typed error and its retry classification are preserved rather than
+    // flattened into a generic eventError.
+    const carried = Cause.isFailReason(reason) ? reason.error : Cause.isDieReason(reason) ? reason.defect : undefined
+    if (carried instanceof LLMErrorClass) return carried
+  }
   return ProviderShared.eventError(route, message, Cause.pretty(cause))
 }
 
@@ -228,17 +234,24 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
 ): Route<Body, Prepared> {
   const protocol = input.protocol
   const encodeBody = Schema.encodeSync(Schema.fromJsonString(protocol.body.schema))
-  const decodeEventEffect = Schema.decodeUnknownEffect(protocol.stream.event)
-  const decodeEvent = (route: string) => (frame: Frame) =>
-    decodeEventEffect(frame).pipe(
-      Effect.mapError(() =>
-        ProviderShared.eventError(
+  // Synchronous decode on the per-token hot path: `Stream.map` (not mapEffect)
+  // avoids scheduling an Effect fiber per streamed frame. A parse failure throws
+  // the typed eventError, which `Stream.map` surfaces as a Die that streamError
+  // recovers below.
+  const decodeEventSync = Schema.decodeUnknownSync(protocol.stream.event)
+  const decodeEvent =
+    (route: string) =>
+    (frame: Frame): Event => {
+      try {
+        return decodeEventSync(frame)
+      } catch {
+        throw ProviderShared.eventError(
           input.id,
           `Invalid ${route} stream event`,
           typeof frame === "string" ? frame : ProviderShared.encodeJson(frame),
-        ),
-      ),
-    )
+        )
+      }
+    }
 
   type BuiltRouteInput = Omit<MakeTransportInput<Body, Prepared, Frame, Event, State>, "defaults"> & {
     readonly defaults?: RouteDefaults
@@ -278,14 +291,13 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
         }),
       streamPrepared: (prepared: Prepared, request: LLMRequest, runtime: TransportRuntime) => {
         const route = `${request.model.provider}/${request.model.route.id}`
-        const events = routeInput.transport
-          .frames(prepared, request, runtime)
-          .pipe(
-            Stream.mapEffect(decodeEvent(route)),
-            protocol.stream.terminal ? Stream.takeUntil(protocol.stream.terminal) : (stream) => stream,
-          )
+        const events = routeInput.transport.frames(prepared, request, runtime).pipe(
+          // Sync decode + sync step: no Effect fiber scheduled per streamed token.
+          Stream.map(decodeEvent(route)),
+          protocol.stream.terminal ? Stream.takeUntil(protocol.stream.terminal) : (stream) => stream,
+        )
         return events.pipe(
-          Stream.mapAccumEffect(
+          Stream.mapAccum(
             () => protocol.stream.initial(request),
             protocol.stream.step,
             protocol.stream.onHalt ? { onHalt: protocol.stream.onHalt } : undefined,

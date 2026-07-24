@@ -466,152 +466,150 @@ interface ParserState {
   readonly reasoningSignatures: Readonly<Record<number, string>>
 }
 
-const step = (state: ParserState, event: BedrockEvent) =>
-  Effect.gen(function* () {
-    if (event.contentBlockStart?.start?.toolUse) {
-      const index = event.contentBlockStart.contentBlockIndex
-      const events: LLMEvent[] = []
-      const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
-      return [
-        {
-          ...state,
-          lifecycle,
-          tools: ToolStream.start(state.tools, index, {
-            id: event.contentBlockStart.start.toolUse.toolUseId,
-            name: event.contentBlockStart.start.toolUse.name,
-          }),
-        },
-        [
-          ...events,
-          LLMEvent.toolInputStart({
-            id: event.contentBlockStart.start.toolUse.toolUseId,
-            name: event.contentBlockStart.start.toolUse.name,
-          }),
-        ],
-      ] as const
-    }
+const step = (state: ParserState, event: BedrockEvent): readonly [ParserState, ReadonlyArray<LLMEvent>] => {
+  if (event.contentBlockStart?.start?.toolUse) {
+    const index = event.contentBlockStart.contentBlockIndex
+    const events: LLMEvent[] = []
+    const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
+    return [
+      {
+        ...state,
+        lifecycle,
+        tools: ToolStream.start(state.tools, index, {
+          id: event.contentBlockStart.start.toolUse.toolUseId,
+          name: event.contentBlockStart.start.toolUse.name,
+        }),
+      },
+      [
+        ...events,
+        LLMEvent.toolInputStart({
+          id: event.contentBlockStart.start.toolUse.toolUseId,
+          name: event.contentBlockStart.start.toolUse.name,
+        }),
+      ],
+    ] as const
+  }
 
-    if (event.contentBlockDelta?.delta?.text) {
-      const events: LLMEvent[] = []
-      return [
-        {
-          ...state,
-          lifecycle: Lifecycle.textDelta(
-            state.lifecycle,
-            events,
-            `text-${event.contentBlockDelta.contentBlockIndex}`,
-            event.contentBlockDelta.delta.text,
-          ),
-        },
-        events,
-      ] as const
-    }
+  if (event.contentBlockDelta?.delta?.text) {
+    const events: LLMEvent[] = []
+    return [
+      {
+        ...state,
+        lifecycle: Lifecycle.textDelta(
+          state.lifecycle,
+          events,
+          `text-${event.contentBlockDelta.contentBlockIndex}`,
+          event.contentBlockDelta.delta.text,
+        ),
+      },
+      events,
+    ] as const
+  }
 
-    if (event.contentBlockDelta?.delta?.reasoningContent) {
-      const index = event.contentBlockDelta.contentBlockIndex
-      const reasoning = event.contentBlockDelta.delta.reasoningContent
-      const events: LLMEvent[] = []
-      return [
-        {
-          ...state,
-          lifecycle: reasoning.text
-            ? Lifecycle.reasoningDelta(state.lifecycle, events, `reasoning-${index}`, reasoning.text)
-            : state.lifecycle,
-          reasoningSignatures: reasoning.signature
-            ? { ...state.reasoningSignatures, [index]: reasoning.signature }
-            : state.reasoningSignatures,
-        },
-        events,
-      ] as const
-    }
+  if (event.contentBlockDelta?.delta?.reasoningContent) {
+    const index = event.contentBlockDelta.contentBlockIndex
+    const reasoning = event.contentBlockDelta.delta.reasoningContent
+    const events: LLMEvent[] = []
+    return [
+      {
+        ...state,
+        lifecycle: reasoning.text
+          ? Lifecycle.reasoningDelta(state.lifecycle, events, `reasoning-${index}`, reasoning.text)
+          : state.lifecycle,
+        reasoningSignatures: reasoning.signature
+          ? { ...state.reasoningSignatures, [index]: reasoning.signature }
+          : state.reasoningSignatures,
+      },
+      events,
+    ] as const
+  }
 
-    if (event.contentBlockDelta?.delta?.toolUse) {
-      const index = event.contentBlockDelta.contentBlockIndex
-      const result = ToolStream.appendExisting(
-        ADAPTER,
-        state.tools,
-        index,
-        event.contentBlockDelta.delta.toolUse.input,
-        "Bedrock Converse tool delta is missing its tool call",
-      )
-      if (ToolStream.isError(result)) return yield* result
-      const events: LLMEvent[] = []
-      const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-      events.push(...result.events)
-      return [{ ...state, lifecycle, tools: result.tools }, events] as const
-    }
+  if (event.contentBlockDelta?.delta?.toolUse) {
+    const index = event.contentBlockDelta.contentBlockIndex
+    const result = ToolStream.appendExisting(
+      ADAPTER,
+      state.tools,
+      index,
+      event.contentBlockDelta.delta.toolUse.input,
+      "Bedrock Converse tool delta is missing its tool call",
+    )
+    if (ToolStream.isError(result)) throw result
+    const events: LLMEvent[] = []
+    const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
+    events.push(...result.events)
+    return [{ ...state, lifecycle, tools: result.tools }, events] as const
+  }
 
-    if (event.contentBlockStop) {
-      const index = event.contentBlockStop.contentBlockIndex
-      const result = yield* ToolStream.finish(ADAPTER, state.tools, index)
-      const events: LLMEvent[] = []
-      const resultEvents = result.events ?? []
-      const lifecycle = resultEvents.length
-        ? Lifecycle.stepStart(state.lifecycle, events)
-        : Lifecycle.reasoningEnd(
-            Lifecycle.textEnd(state.lifecycle, events, `text-${index}`),
-            events,
-            `reasoning-${index}`,
-            state.reasoningSignatures[index]
-              ? bedrockMetadata({ signature: state.reasoningSignatures[index] })
-              : undefined,
-          )
-      events.push(...resultEvents)
-      return [
-        {
-          ...state,
-          hasToolCalls: resultEvents.some(LLMEvent.is.toolCall) ? true : state.hasToolCalls,
-          lifecycle,
-          tools: result.tools,
-          reasoningSignatures: Object.fromEntries(
-            Object.entries(state.reasoningSignatures).filter(([key]) => key !== String(index)),
-          ),
-        },
-        events,
-      ] as const
-    }
+  if (event.contentBlockStop) {
+    const index = event.contentBlockStop.contentBlockIndex
+    const result = ToolStream.finish(ADAPTER, state.tools, index)
+    const events: LLMEvent[] = []
+    const resultEvents = result.events ?? []
+    const lifecycle = resultEvents.length
+      ? Lifecycle.stepStart(state.lifecycle, events)
+      : Lifecycle.reasoningEnd(
+          Lifecycle.textEnd(state.lifecycle, events, `text-${index}`),
+          events,
+          `reasoning-${index}`,
+          state.reasoningSignatures[index]
+            ? bedrockMetadata({ signature: state.reasoningSignatures[index] })
+            : undefined,
+        )
+    events.push(...resultEvents)
+    return [
+      {
+        ...state,
+        hasToolCalls: resultEvents.some(LLMEvent.is.toolCall) ? true : state.hasToolCalls,
+        lifecycle,
+        tools: result.tools,
+        reasoningSignatures: Object.fromEntries(
+          Object.entries(state.reasoningSignatures).filter(([key]) => key !== String(index)),
+        ),
+      },
+      events,
+    ] as const
+  }
 
-    if (event.messageStop) {
-      return [
-        {
-          ...state,
-          pendingFinish: { reason: mapFinishReason(event.messageStop.stopReason), usage: state.pendingFinish?.usage },
-        },
-        [],
-      ] as const
-    }
+  if (event.messageStop) {
+    return [
+      {
+        ...state,
+        pendingFinish: { reason: mapFinishReason(event.messageStop.stopReason), usage: state.pendingFinish?.usage },
+      },
+      [],
+    ] as const
+  }
 
-    if (event.metadata) {
-      const usage = mapUsage(event.metadata.usage)
-      return [{ ...state, pendingFinish: { reason: state.pendingFinish?.reason ?? "stop", usage } }, []] as const
-    }
+  if (event.metadata) {
+    const usage = mapUsage(event.metadata.usage)
+    return [{ ...state, pendingFinish: { reason: state.pendingFinish?.reason ?? "stop", usage } }, []] as const
+  }
 
-    if (event.internalServerException || event.modelStreamErrorException || event.serviceUnavailableException) {
-      const message =
-        event.internalServerException?.message ??
-        event.modelStreamErrorException?.message ??
-        event.serviceUnavailableException?.message ??
-        "Bedrock Converse stream error"
-      return [state, [LLMEvent.providerError({ message, retryable: true })]] as const
-    }
+  if (event.internalServerException || event.modelStreamErrorException || event.serviceUnavailableException) {
+    const message =
+      event.internalServerException?.message ??
+      event.modelStreamErrorException?.message ??
+      event.serviceUnavailableException?.message ??
+      "Bedrock Converse stream error"
+    return [state, [LLMEvent.providerError({ message, retryable: true })]] as const
+  }
 
-    if (event.validationException || event.throttlingException) {
-      const message =
-        event.validationException?.message ?? event.throttlingException?.message ?? "Bedrock Converse error"
-      return [
-        state,
-        [
-          LLMEvent.providerError({
-            message,
-            classification: event.validationException && isContextOverflow(message) ? "context-overflow" : undefined,
-            retryable: event.throttlingException !== undefined,
-          }),
-        ],
-      ] as const
-    }
+  if (event.validationException || event.throttlingException) {
+    const message = event.validationException?.message ?? event.throttlingException?.message ?? "Bedrock Converse error"
+    return [
+      state,
+      [
+        LLMEvent.providerError({
+          message,
+          classification: event.validationException && isContextOverflow(message) ? "context-overflow" : undefined,
+          retryable: event.throttlingException !== undefined,
+        }),
+      ],
+    ] as const
+  }
 
-    return [state, []] as const
-  })
+  return [state, []] as const
+}
 
 const framing = BedrockEventStream.framing(ADAPTER)
 

@@ -193,7 +193,7 @@ const FakeProtocol = Protocol.make<FakeBody, string, string, void>({
   stream: {
     event: Schema.String,
     initial: () => undefined,
-    step: (_, frame) => Effect.succeed([undefined, [{ type: "text-delta", id: "text-0", text: frame }]] as const),
+    step: (_, frame) => [undefined, [{ type: "text-delta", id: "text-0", text: frame }]] as const,
     onHalt: () => [{ type: "finish", reason: "stop" }],
   },
 })

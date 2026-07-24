@@ -54,8 +54,16 @@ export interface ProtocolStream<Frame, Event, State> {
   readonly event: Schema.Codec<Event, Frame>
   /** Initial parser state. Called once per response with the resolved request. */
   readonly initial: (request: LLMRequest) => State
-  /** Translate one event into emitted `LLMEvent`s plus the next state. */
-  readonly step: (state: State, event: Event) => Effect.Effect<readonly [State, ReadonlyArray<LLMEvent>], LLMError>
+  /**
+   * Translate one event into emitted `LLMEvent`s plus the next state.
+   *
+   * Synchronous by contract: this runs once per streamed frame (per token), so it
+   * must not schedule an Effect fiber. On malformed provider output it THROWS the
+   * typed `LLMError` (e.g. an unparseable tool-call argument); the transport runs
+   * `step` inside `Stream.mapAccum` and re-types the thrown error at the stream
+   * boundary. Everything else is pure state/event accumulation.
+   */
+  readonly step: (state: State, event: Event) => readonly [State, ReadonlyArray<LLMEvent>]
   /** Optional request-completion signal for transports that do not end naturally. */
   readonly terminal?: (event: Event) => boolean
   /** Optional flush emitted when the framed stream ends. */

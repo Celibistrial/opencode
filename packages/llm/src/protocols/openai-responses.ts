@@ -786,11 +786,8 @@ const onReasoningSummaryPartDone = (state: ParserState, event: OpenAIResponsesEv
   ]
 }
 
-const onFunctionCallArgumentsDelta = Effect.fn("OpenAIResponses.onFunctionCallArgumentsDelta")(function* (
-  state: ParserState,
-  event: OpenAIResponsesEvent,
-) {
-  if (!event.item_id || !event.delta) return [state, NO_EVENTS] satisfies StepResult
+const onFunctionCallArgumentsDelta = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
+  if (!event.item_id || !event.delta) return [state, NO_EVENTS]
   const result = ToolStream.appendExisting(
     ADAPTER,
     state.tools,
@@ -798,29 +795,26 @@ const onFunctionCallArgumentsDelta = Effect.fn("OpenAIResponses.onFunctionCallAr
     event.delta,
     "OpenAI Responses tool argument delta is missing its tool call",
   )
-  if (ToolStream.isError(result)) return yield* result
+  if (ToolStream.isError(result)) throw result
   const events: LLMEvent[] = []
   const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
   events.push(...result.events)
-  return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
-})
+  return [{ ...state, lifecycle, tools: result.tools }, events]
+}
 
-const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function* (
-  state: ParserState,
-  event: OpenAIResponsesEvent,
-) {
+const onOutputItemDone = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   const item = event.item
-  if (!item) return [state, NO_EVENTS] satisfies StepResult
+  if (!item) return [state, NO_EVENTS]
 
   if (item.type === "function_call") {
-    if (!item.id || !item.call_id || !item.name) return [state, NO_EVENTS] satisfies StepResult
+    if (!item.id || !item.call_id || !item.name) return [state, NO_EVENTS]
     const tools = state.tools[item.id]
       ? state.tools
       : ToolStream.start(state.tools, item.id, { id: item.call_id, name: item.name })
     const result =
       item.arguments === undefined
-        ? yield* ToolStream.finish(ADAPTER, tools, item.id)
-        : yield* ToolStream.finishWithInput(ADAPTER, tools, item.id, item.arguments)
+        ? ToolStream.finish(ADAPTER, tools, item.id)
+        : ToolStream.finishWithInput(ADAPTER, tools, item.id, item.arguments)
     const events: LLMEvent[] = []
     const resultEvents = result.events ?? []
     const lifecycle = resultEvents.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
@@ -869,8 +863,8 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
     ] satisfies StepResult
   }
 
-  return [state, NO_EVENTS] satisfies StepResult
-})
+  return [state, NO_EVENTS]
+}
 
 const onResponseFinish = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   const events: LLMEvent[] = []
@@ -920,32 +914,29 @@ const onError = (state: ParserState, event: OpenAIResponsesEvent): StepResult =>
   [providerError(event, "OpenAI Responses stream error")],
 ]
 
-const step = (state: ParserState, event: OpenAIResponsesEvent) => {
-  if (event.type === "response.output_text.delta") return Effect.succeed(onOutputTextDelta(state, event))
+const step = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
+  if (event.type === "response.output_text.delta") return onOutputTextDelta(state, event)
   if (
     event.type === "response.reasoning_text.delta" ||
     event.type === "response.reasoning_summary.delta" ||
     event.type === "response.reasoning_summary_text.delta"
   )
-    return Effect.succeed(onReasoningDelta(state, event))
+    return onReasoningDelta(state, event)
   if (
     event.type === "response.reasoning_text.done" ||
     event.type === "response.reasoning_summary.done" ||
     event.type === "response.reasoning_summary_text.done"
   )
-    return Effect.succeed(onReasoningDone(state, event))
-  if (event.type === "response.reasoning_summary_part.added")
-    return Effect.succeed(onReasoningSummaryPartAdded(state, event))
-  if (event.type === "response.reasoning_summary_part.done")
-    return Effect.succeed(onReasoningSummaryPartDone(state, event))
-  if (event.type === "response.output_item.added") return Effect.succeed(onOutputItemAdded(state, event))
+    return onReasoningDone(state, event)
+  if (event.type === "response.reasoning_summary_part.added") return onReasoningSummaryPartAdded(state, event)
+  if (event.type === "response.reasoning_summary_part.done") return onReasoningSummaryPartDone(state, event)
+  if (event.type === "response.output_item.added") return onOutputItemAdded(state, event)
   if (event.type === "response.function_call_arguments.delta") return onFunctionCallArgumentsDelta(state, event)
   if (event.type === "response.output_item.done") return onOutputItemDone(state, event)
-  if (event.type === "response.completed" || event.type === "response.incomplete")
-    return Effect.succeed(onResponseFinish(state, event))
-  if (event.type === "response.failed") return Effect.succeed(onResponseFailed(state, event))
-  if (event.type === "error") return Effect.succeed(onError(state, event))
-  return Effect.succeed<StepResult>([state, NO_EVENTS])
+  if (event.type === "response.completed" || event.type === "response.incomplete") return onResponseFinish(state, event)
+  if (event.type === "response.failed") return onResponseFailed(state, event)
+  if (event.type === "error") return onError(state, event)
+  return [state, NO_EVENTS]
 }
 
 // =============================================================================
