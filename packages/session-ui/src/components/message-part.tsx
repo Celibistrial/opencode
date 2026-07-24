@@ -1713,10 +1713,15 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof (props.message as AssistantMessage).time.completed !== "number",
   )
-  const text = () => readPartText(data.store.part_text_accum_delta, part())
+  // Memoized: readPartText re-.trim()s the whole accumulated text, and text() is
+  // read from ~7 render sites — without a memo each read re-trims the growing
+  // string every streaming tick.
+  const text = createMemo(() => readPartText(data.store.part_text_accum_delta, part()))
   const isLastTextPart = createMemo(() => {
     const last = (data.store.part?.[props.message.id] ?? [])
-      .filter((item): item is TextPart => item?.type === "text" && !!item.text?.trim())
+      // /\S/.test avoids allocating a trimmed copy of every text part's full text
+      // just to check it is non-blank (equivalent to !!item.text?.trim()).
+      .filter((item): item is TextPart => item?.type === "text" && !!item.text && /\S/.test(item.text))
       .at(-1)
     return last?.id === part().id
   })
