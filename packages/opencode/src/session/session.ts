@@ -48,10 +48,14 @@ import { SessionMessage } from "@opencode-ai/schema/session-message"
 const parentTitlePrefix = "New session - "
 const childTitlePrefix = "Child session - "
 
+// The pattern is built entirely from module constants, so compile it once rather
+// than on every call (isDefaultTitle runs per turn to gate auto title generation).
+const defaultTitlePattern = new RegExp(
+  `^(${parentTitlePrefix}|${childTitlePrefix})\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$`,
+)
+
 export function isDefaultTitle(title: string) {
-  return new RegExp(
-    `^(${parentTitlePrefix}|${childTitlePrefix})\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$`,
-  ).test(title)
+  return defaultTitlePattern.test(title)
 }
 
 type SessionRow = typeof SessionTable.$inferSelect
