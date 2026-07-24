@@ -42,7 +42,13 @@ const layer = Layer.effect(
 
         async function getCommand(item: Formatter.Info) {
           let cmd = commands[item.name]
-          if (cmd === false || cmd === undefined) {
+          // Cache the DISABLED result too. `item.enabled()` probes the filesystem
+          // (which()/Npm.which() walk PATH and node_modules), and getCommand runs per
+          // format i.e. per edit; treating a cached `false` as "recheck" re-probed
+          // every unavailable-but-extension-matching formatter on every edit. Only
+          // probe when never checked; the state is rebuilt on config reload / restart,
+          // which is when a newly-installed formatter is picked up (standard behavior).
+          if (cmd === undefined) {
             cmd = await item.enabled({ ...ctx, experimentalOxfmt: flags.experimentalOxfmt })
             commands[item.name] = cmd
           }
