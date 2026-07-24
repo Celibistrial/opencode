@@ -307,9 +307,15 @@ const layer = Layer.effect(
           include: "file",
         })
         .pipe(Effect.catch(() => Effect.succeed<string[]>([])))
+      // Precompute each entry's join key once (Schwartzian transform) instead of
+      // re-joining both arrays inside every comparison (O(n log n) allocations).
       return result
-        .map((x) => [...prefix, ...x.slice(0, -5).split(path.sep)])
-        .toSorted((a, b) => a.join("/").localeCompare(b.join("/")))
+        .map((x) => {
+          const parts = [...prefix, ...x.slice(0, -5).split(path.sep)]
+          return { key: parts.join("/"), parts }
+        })
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .map((entry) => entry.parts)
     })
 
     return Service.of({
