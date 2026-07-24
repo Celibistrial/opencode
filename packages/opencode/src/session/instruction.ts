@@ -95,14 +95,25 @@ const layer: Layer.Layer<
       return yield* fs.readFileString(filepath).pipe(Effect.catch(() => Effect.succeed("")))
     })
 
+    // Remote instruction bodies are stable across a session, but system() runs per
+    // turn — without this each turn re-fetched every remote instruction URL over HTTP
+    // (a network round trip plus a 5s-timeout hang risk per turn). Cache successful
+    // fetches for the instance's lifetime; only non-empty results are cached, so a
+    // transient failure (which returns "") is retried on the next turn rather than
+    // stuck empty.
+    const remoteCache = new Map<string, string>()
     const fetch = Effect.fnUntraced(function* (url: string) {
+      const cached = remoteCache.get(url)
+      if (cached !== undefined) return cached
       const res = yield* http.execute(HttpClientRequest.get(url)).pipe(
         Effect.timeout(5000),
         Effect.catch(() => Effect.succeed(null)),
       )
       if (!res) return ""
       const body = yield* res.arrayBuffer.pipe(Effect.catch(() => Effect.succeed(new ArrayBuffer(0))))
-      return new TextDecoder().decode(body)
+      const text = new TextDecoder().decode(body)
+      if (text) remoteCache.set(url, text)
+      return text
     })
 
     const clear = Effect.fn("Instruction.clear")(function* (messageID: MessageID) {
