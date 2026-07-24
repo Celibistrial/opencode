@@ -92,19 +92,45 @@ export function canReusePendingBlock(current: Pick<Block, "mode" | "raw"> | unde
 
 export function project(previous: Projection | undefined, text: string, live: boolean): Projection {
   if (!live || !previous || !text.startsWith(previous.text)) return { text, blocks: stream(text, live) }
-  const tail = previous.blocks.at(-1)
   const suffix = text.slice(previous.text.length)
-  if (!suffix || tail?.mode !== "code" || tail.complete || closesFence(tail.raw, suffix))
-    return { text, blocks: stream(text, live) }
-  return {
-    text,
-    blocks: [
-      ...previous.blocks.slice(0, -1),
-      {
-        ...tail,
-        raw: tail.raw + suffix,
-        src: tail.src + suffix,
-      },
-    ],
+  if (!suffix) return { text, blocks: previous.blocks }
+  const tail = previous.blocks.at(-1)
+
+  // Fast path: an open (unclosed) code fence just grows — append the suffix without re-lexing.
+  if (tail?.mode === "code" && !tail.complete && !closesFence(tail.raw, suffix))
+    return {
+      text,
+      blocks: [
+        ...previous.blocks.slice(0, -1),
+        {
+          ...tail,
+          raw: tail.raw + suffix,
+          src: tail.src + suffix,
+        },
+      ],
+    }
+
+  // Incremental lex: reuse the already-frozen leading blocks and re-lex only the
+  // trailing region, instead of running marked.lexer over the whole (growing)
+  // message on every delta — the dominant streaming-render cost for long answers.
+  //
+  // Safety: this only reuses a prefix of blocks whose combined raw ends at a blank
+  // line ("\n\n"). A blank line is a hard block boundary in CommonMark — no setext
+  // underline, lazy list/blockquote continuation, or paragraph can span it — so
+  // lexing the remainder in isolation yields the same tail blocks as lexing the
+  // whole text. Reference definitions are the one construct that reaches across
+  // boundaries; `refs(text)` already routes those to a single live block, and we
+  // additionally bail when refs are present. Frozen code blocks must be complete
+  // (an open fence is handled by the fast path above).
+  if (!refs(text) && previous.blocks.length > 1) {
+    const frozen = previous.blocks.slice(0, -1)
+    if (!frozen.some((block) => block.mode === "code" && !block.complete)) {
+      const prefix = frozen.reduce((sum, block) => sum + block.raw, "")
+      if (prefix.endsWith("\n\n") && text.startsWith(prefix)) {
+        return { text, blocks: [...frozen, ...stream(text.slice(prefix.length), live)] }
+      }
+    }
   }
+
+  return { text, blocks: stream(text, live) }
 }

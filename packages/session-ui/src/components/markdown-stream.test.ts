@@ -177,6 +177,45 @@ describe("markdown stream", () => {
     ])
   })
 
+  test("incremental project matches a full re-lex at every streaming step", () => {
+    // The incremental path must be indistinguishable from lexing the whole text.
+    // Stream each document one word/newline chunk at a time and assert the projected
+    // blocks deep-equal stream(fullPrefix) at every step (covers prose, headings,
+    // lists, tables, code fences, blank-line boundaries, and reference definitions).
+    const documents = [
+      "# Plan\n\nFirst paragraph with **bold** and `code`.\n\nSecond paragraph here.\n\n- one\n- two\n\nDone.",
+      "Intro line.\n\n```ts\nconst x = 1\nconst y = 2\n```\n\nAfter the code we continue.\n\nAnd a final line.",
+      "Para one.\n\nPara two spanning\nmultiple soft-wrapped lines that keep going.\n\n## Heading two\n\nbody",
+      "| a | b |\n|---|---|\n| 1 | 2 |\n\nText after the table.\n\nMore text.",
+      "See [docs][1] here.\n\nAnother paragraph.\n\n[1]: https://example.com",
+      "Setext title\n============\n\nParagraph body.\n\nAnother paragraph after.",
+      "> a quote\n> continued\n\nplain paragraph\n\n> second quote",
+    ]
+    const chunk = (s: string) => s.match(/\S+\s*|\s+/g) ?? [s]
+    for (const doc of documents) {
+      const parts = chunk(doc)
+      let acc = ""
+      let previous: ReturnType<typeof project> | undefined
+      for (const piece of parts) {
+        acc += piece
+        previous = project(previous, acc, true)
+        expect(previous.blocks).toEqual(stream(acc, true))
+      }
+      expect(acc).toBe(doc)
+    }
+  })
+
+  test("reuses frozen prose blocks across deltas instead of re-lexing them", () => {
+    // Reference identity proves the leading blocks were reused (not re-lexed).
+    const previous = project(undefined, "# Plan\n\nFirst paragraph.\n\nsecond para", true)
+    const next = project(previous, `${previous.text} still going`, true)
+    expect(next.blocks[0]).toBe(previous.blocks[0])
+    expect(next.blocks[1]).toBe(previous.blocks[1])
+    expect(next.blocks.at(-1)).toEqual({ raw: "second para still going", src: "second para still going", mode: "live" })
+    // And still equals a full re-lex.
+    expect(next.blocks).toEqual(stream(next.text, true))
+  })
+
   test("closes tilde fences split across provider deltas", () => {
     const open = project(undefined, "~~~ts\nconst x = 1\n", true)
     const one = project(open, `${open.text}~`, true)
