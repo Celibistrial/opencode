@@ -331,7 +331,10 @@ describe("tool.edit", () => {
 
         expect(result.metadata.filediff).toBeDefined()
         expect(result.metadata.filediff.file).toBe(filepath)
-        expect(result.metadata.filediff.additions).toBeGreaterThan(0)
+        // line2 -> two lines: 2 additions, 1 deletion. Exact counts guard the
+        // patch-derived counting (no second full-file diff).
+        expect(result.metadata.filediff.additions).toBe(2)
+        expect(result.metadata.filediff.deletions).toBe(1)
       }),
     )
   })

@@ -7,7 +7,7 @@ import * as path from "path"
 import { Effect, Schema, Semaphore } from "effect"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
-import { createTwoFilesPatch, diffLines } from "diff"
+import { createTwoFilesPatch } from "diff"
 import DESCRIPTION from "./edit.txt"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -182,11 +182,19 @@ export const EditTool = Tool.define(
             () => Effect.sync(() => releaseLock(resolvedFilePath)),
           )
 
+          // Count additions/deletions from the unified patch already computed above
+          // instead of running a second full-file diff (diffLines). A unified diff
+          // emits one `+`/`-` line per added/removed line (context lines start with a
+          // space; the `+++`/`---` headers are excluded), so this yields the same
+          // totals and stays consistent with the diff shown to the user.
           let additions = 0
           let deletions = 0
-          for (const change of diffLines(contentOld, contentNew)) {
-            if (change.added) additions += change.count || 0
-            if (change.removed) deletions += change.count || 0
+          for (const line of diff.split("\n")) {
+            if (line.startsWith("+")) {
+              if (!line.startsWith("+++")) additions++
+            } else if (line.startsWith("-")) {
+              if (!line.startsWith("---")) deletions++
+            }
           }
           const filediff: Snapshot.FileDiff = {
             file: filePath,
