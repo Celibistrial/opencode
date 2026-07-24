@@ -26,6 +26,7 @@ export type ViewDiff = {
 
 const diffCacheLimit = 16
 const patchFileDiffCache = new Map<string, FileDiffMetadata>()
+const contentFileDiffCache = new Map<string, FileDiffMetadata>()
 
 export function resolveFileDiff(diff: DiffSource) {
   if (typeof diff.patch === "string") return fileDiffFromPatch(diff.file, diff.patch)
@@ -136,7 +137,20 @@ function patchInput(file: string, patch: string) {
 
 function fileDiffFromContent(file: string, before: string, after: string) {
   if (!before && !after) return emptyFileDiff(file)
-  return parseDiffFromFile({ name: file, contents: before }, { name: file, contents: after })
+  // Mirror the patch-path LRU: the content path (before/after) is hit un-memoized
+  // from session-turn renders, re-running a full Myers diff per render.
+  const key = `${file}\0${before}\0${after}`
+  const hit = contentFileDiffCache.get(key)
+  if (hit) {
+    contentFileDiffCache.delete(key)
+    contentFileDiffCache.set(key, hit)
+    return hit
+  }
+  const value = parseDiffFromFile({ name: file, contents: before }, { name: file, contents: after })
+  contentFileDiffCache.set(key, value)
+  while (contentFileDiffCache.size > diffCacheLimit)
+    contentFileDiffCache.delete(contentFileDiffCache.keys().next().value!)
+  return value
 }
 
 function emptyFileDiff(file: string) {
