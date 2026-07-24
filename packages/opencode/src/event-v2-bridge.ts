@@ -16,20 +16,31 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const events = yield* EventV2.Service
 
+    // The instance location is a pure function of the (stable) InstanceRef ctx and
+    // workspaceID, but this publish runs for EVERY event — including per-delta during
+    // streaming. Cache the constructed Location.Info (a validating Schema.Class) and
+    // rebuild only when ctx/workspaceID actually change, instead of re-validating it
+    // on every publish.
+    let cachedCtx: unknown
+    let cachedWorkspaceID: string | undefined
+    let cachedLocation: Location.Info | undefined
+
     const publish: EventV2.Interface["publish"] = (definition, data, options) =>
       Effect.gen(function* () {
         if (options?.location) return yield* events.publish(definition, data, options)
         const ctx = yield* InstanceRef
         if (!ctx) return yield* events.publish(definition, data, options)
         const workspaceID = yield* WorkspaceRef
-        return yield* events.publish(definition, data, {
-          ...options,
-          location: new Location.Info({
+        if (ctx !== cachedCtx || workspaceID !== cachedWorkspaceID || !cachedLocation) {
+          cachedLocation = new Location.Info({
             directory: AbsolutePath.make(ctx.directory),
             ...(workspaceID ? { workspaceID } : {}),
             project: { id: Project.ID.make(ctx.project.id), directory: AbsolutePath.make(ctx.worktree) },
-          }),
-        })
+          })
+          cachedCtx = ctx
+          cachedWorkspaceID = workspaceID
+        }
+        return yield* events.publish(definition, data, { ...options, location: cachedLocation })
       })
 
     const unsubscribe = yield* events.listen((event) =>
