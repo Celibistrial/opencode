@@ -1,6 +1,8 @@
 import { describe, test } from "bun:test"
 import { MessageV2 } from "@/session/message-v2"
 import { ProviderTransform } from "@/provider/transform"
+import { LLMNative } from "@/session/llm/native-request"
+import { LLMRequest } from "@opencode-ai/llm"
 import type { Provider } from "@/provider/provider"
 import type { SessionV1 } from "@opencode-ai/core/v1/session"
 
@@ -124,5 +126,27 @@ describe("perf: message transform per-turn", () => {
       tAnt += performance.now() - t
     }
     console.log(`ProviderTransform.message (anthropic): ${(tAnt / N).toFixed(2)}ms`)
+
+    // Native path: the opencode-side conversion of ProviderTransform output into
+    // an LLMRequest (another O(history) pass before the protocol's body.from lowering)
+    const transformed = ProviderTransform.message(converted, model, {})
+    let tNative = 0
+    for (let k = 0; k < N; k++) {
+      const t = performance.now()
+      LLMNative.request({ model, apiKey: "x", baseURL: "https://api.deepseek.com", messages: transformed })
+      tNative += performance.now() - t
+    }
+    console.log(`LLMNative.request (native build): ${(tNative / N).toFixed(2)}ms`)
+
+    // The redundant second build that used to attach tools via LLMRequest.update —
+    // now eliminated by threading toolDefinitions into the single build above.
+    const built = LLMNative.request({ model, apiKey: "x", baseURL: "https://api.deepseek.com", messages: transformed })
+    let tUpdate = 0
+    for (let k = 0; k < N; k++) {
+      const t = performance.now()
+      LLMRequest.update(built, { tools: [...built.tools] })
+      tUpdate += performance.now() - t
+    }
+    console.log(`LLMRequest.update rebuild (eliminated): ${(tUpdate / N).toFixed(2)}ms`)
   }, 60000)
 })

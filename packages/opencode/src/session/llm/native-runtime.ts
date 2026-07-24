@@ -8,7 +8,6 @@ import { Cause, Effect, FiberSet, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { FetchHttpClient } from "effect/unstable/http"
 import {
-  LLMRequest,
   Tool as NativeTool,
   ToolFailure,
   ToolRuntime,
@@ -52,22 +51,50 @@ function statusWithFetch(
   fetch: typeof globalThis.fetch | undefined,
 ): RuntimeStatus {
   const providerID = input.model.providerID
-  if (providerID !== "openai" && providerID !== "anthropic" && !providerID.startsWith("opencode"))
-    return { type: "unsupported", reason: "provider is not openai, opencode, or anthropic" }
   const npm = input.model.api.npm
   if (npm !== "@ai-sdk/openai" && npm !== "@ai-sdk/openai-compatible" && npm !== "@ai-sdk/anthropic")
     return { type: "unsupported", reason: "provider package is not OpenAI, OpenAI-compatible, or Anthropic" }
+  // First-party OpenAI/Anthropic packages stay pinned to their own provider IDs.
+  // OpenAI-compatible providers (deepseek, groq, together, …) all speak the same
+  // wire protocol, so the native openai-compatible-chat route handles any of them
+  // by provider id — no per-provider allowlist needed.
+  if (
+    npm !== "@ai-sdk/openai-compatible" &&
+    providerID !== "openai" &&
+    providerID !== "anthropic" &&
+    !providerID.startsWith("opencode")
+  )
+    return { type: "unsupported", reason: "provider is not openai, opencode, or anthropic" }
   if (input.auth?.type === "oauth" && !(input.provider.id === "openai" && fetch)) {
     return { type: "unsupported", reason: "OAuth auth requires a provider fetch override" }
   }
+  // Some openai-compatible providers rely on custom fetch middleware for
+  // correctness (e.g. snowflake-cortex rewrites max_tokens -> max_completion_tokens
+  // and masks completion-signalling 400s). The native runtime only forwards a
+  // provider fetch on the openai+oauth path (`fetch` above); if a provider ships
+  // fetch middleware that won't be forwarded, native would send raw requests and
+  // break it, so fall back to the AI-SDK path.
+  if (typeof input.provider.options.fetch === "function" && !fetch)
+    return { type: "unsupported", reason: "provider uses custom fetch middleware unsupported by the native runtime" }
 
   const apiKey = typeof input.provider.options.apiKey === "string" ? input.provider.options.apiKey : input.provider.key
   if (!apiKey) return { type: "unsupported", reason: "API key is not configured" }
 
+  // OpenAI-compatible routes require an explicit base URL — the native request
+  // adapter throws if it can't resolve one (native-request.ts requireBaseURL).
+  // Guard here so a missing URL degrades to the AI-SDK fallback instead of a
+  // hard stream failure.
+  const baseURL =
+    typeof input.provider.options.baseURL === "string"
+      ? input.provider.options.baseURL
+      : input.model.api.url || undefined
+  if (npm === "@ai-sdk/openai-compatible" && !baseURL)
+    return { type: "unsupported", reason: "OpenAI-compatible provider has no resolvable base URL" }
+
   return {
     type: "supported",
     apiKey,
-    baseURL: typeof input.provider.options.baseURL === "string" ? input.provider.options.baseURL : undefined,
+    baseURL,
   }
 }
 
@@ -87,11 +114,16 @@ export function stream(input: StreamInput): StreamResult {
   // — if a field ever needs to differ between the two surfaces, the
   // translation belongs here, not split across both packages.
   const tools = nativeTools(input.tools, input)
+  // Build the request ONCE with the tool definitions included. Previously the
+  // request was built without tools and then rebuilt via LLMRequest.update just to
+  // attach them, which re-extracted and re-constructed every message (a second
+  // full O(history) Schema-class build per turn).
   const request = LLMNative.request({
     model: input.model,
     apiKey: current.apiKey,
     baseURL: current.baseURL,
     messages: ProviderTransform.message(input.messages, input.model, input.providerOptions ?? {}),
+    toolDefinitions: toDefinitions(tools),
     toolChoice: input.toolChoice,
     temperature: input.temperature,
     topP: input.topP,
@@ -105,35 +137,29 @@ export function stream(input: StreamInput): StreamResult {
       Effect.gen(function* () {
         const settlements = yield* FiberSet.make<void>()
         const results = yield* Queue.unbounded<LLMEvent, Cause.Done>()
-        const provider = input.llmClient
-          .stream(
-            LLMRequest.update(request, {
-              tools: [...request.tools, ...toDefinitions(tools)],
-            }),
-          )
-          .pipe(
-            Stream.flatMap((event) =>
-              event.type !== "tool-call" || event.providerExecuted
-                ? Stream.make(event)
-                : Stream.make(event).pipe(
-                    Stream.concat(
-                      Stream.fromEffectDrain(
-                        ToolRuntime.dispatch(tools, event).pipe(
-                          Effect.flatMap((dispatched) => Queue.offerAll(results, dispatched.events)),
-                          Effect.catchCause((cause) => Queue.failCause(results, cause)),
-                          Effect.asVoid,
-                          FiberSet.run(settlements, { startImmediately: true }),
-                        ),
+        const provider = input.llmClient.stream(request).pipe(
+          Stream.flatMap((event) =>
+            event.type !== "tool-call" || event.providerExecuted
+              ? Stream.make(event)
+              : Stream.make(event).pipe(
+                  Stream.concat(
+                    Stream.fromEffectDrain(
+                      ToolRuntime.dispatch(tools, event).pipe(
+                        Effect.flatMap((dispatched) => Queue.offerAll(results, dispatched.events)),
+                        Effect.catchCause((cause) => Queue.failCause(results, cause)),
+                        Effect.asVoid,
+                        FiberSet.run(settlements, { startImmediately: true }),
                       ),
                     ),
                   ),
+                ),
+          ),
+          Stream.concat(
+            Stream.fromEffectDrain(
+              FiberSet.awaitEmpty(settlements).pipe(Effect.andThen(Queue.end(results)), Effect.asVoid),
             ),
-            Stream.concat(
-              Stream.fromEffectDrain(
-                FiberSet.awaitEmpty(settlements).pipe(Effect.andThen(Queue.end(results)), Effect.asVoid),
-              ),
-            ),
-          )
+          ),
+        )
         return provider.pipe(Stream.concat(Stream.fromQueue(results)))
       }),
     ),

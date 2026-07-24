@@ -25,6 +25,11 @@ export type RequestInput = {
   readonly system?: readonly string[]
   readonly messages: readonly ModelMessage[]
   readonly tools?: Record<string, ToolInput>
+  // Pre-built tool definitions to append as-is. Lets the caller supply schemas it
+  // has already lowered (the native runtime builds these with its own AI-SDK schema
+  // handling) so the request is constructed once instead of being rebuilt via
+  // LLMRequest.update just to attach tools.
+  readonly toolDefinitions?: readonly ToolDefinition[]
   readonly toolChoice?: "auto" | "required" | "none"
   readonly temperature?: number
   readonly topP?: number
@@ -186,7 +191,9 @@ export const request = (input: RequestInput) => {
     model: model(input, input.headers),
     system: [...(input.system ?? []).map(SystemPart.make), ...converted.system],
     messages: converted.messages,
-    tools: tools(input.tools),
+    // ToolDefinition instances pass through ToolDefinition.make unchanged, so
+    // pre-built definitions are appended without a rebuild.
+    tools: [...tools(input.tools), ...(input.toolDefinitions ?? [])],
     toolChoice: input.toolChoice,
     generation: generation(input),
     providerOptions: input.providerOptions,
