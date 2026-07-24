@@ -33,6 +33,12 @@ export const ripgrepLayer = Layer.effect(
     }
     const directories = new Set<string>()
     let directoriesDirty = false
+    // Cache the combined files+directories list for the mixed picker so it is not
+    // rebuilt on every keystroke. state.files grows by push (length changes) and
+    // state.directories is reassigned when dirty, so invalidate on either.
+    let combined: string[] | undefined
+    let combinedFilesLen = -1
+    let combinedDirs: string[] | undefined
     yield* ripgrep
       .find({
         cwd: location.directory,
@@ -115,12 +121,17 @@ export const ripgrepLayer = Layer.effect(
             state.directories = Array.from(directories)
             directoriesDirty = false
           }
-          const items =
-            input.type === "file"
-              ? state.files
-              : input.type === "directory"
-                ? state.directories
-                : [...state.files, ...state.directories]
+          let items: string[]
+          if (input.type === "file") items = state.files
+          else if (input.type === "directory") items = state.directories
+          else {
+            if (combined === undefined || combinedFilesLen !== state.files.length || combinedDirs !== state.directories) {
+              combined = [...state.files, ...state.directories]
+              combinedFilesLen = state.files.length
+              combinedDirs = state.directories
+            }
+            items = combined
+          }
           return fuzzysort.go(input.query, items, { limit: input.limit ?? 50 }).map((item) => {
             const relative = item.target
             const type = relative.endsWith(path.sep) ? ("directory" as const) : ("file" as const)
