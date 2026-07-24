@@ -1,6 +1,6 @@
 import { EventStreamCodec } from "@smithy/eventstream-codec"
 import { fromUtf8, toUtf8 } from "@smithy/util-utf8"
-import { Effect, Stream } from "effect"
+import { Stream } from "effect"
 import type { Framing } from "../route/framing"
 import { ProviderShared } from "./shared"
 
@@ -32,8 +32,12 @@ const appendChunk = (state: FrameBufferState, chunk: Uint8Array): FrameBufferSta
   return { buffer: next, offset: 0 }
 }
 
-const consumeFrames = (route: string) => (state: FrameBufferState, chunk: Uint8Array) =>
-  Effect.gen(function* () {
+// Synchronous by contract (runs inside Stream.mapAccum, no per-frame fiber). A
+// malformed frame or payload throws the typed eventError, which the transport's
+// stream re-types at the boundary (client.ts streamError recovers it from a Die).
+const consumeFrames =
+  (route: string) =>
+  (state: FrameBufferState, chunk: Uint8Array): readonly [FrameBufferState, object[]] => {
     let cursor = appendChunk(state, chunk)
     const out: object[] = []
     while (cursor.buffer.length - cursor.offset >= 4) {
@@ -41,16 +45,17 @@ const consumeFrames = (route: string) => (state: FrameBufferState, chunk: Uint8A
       const totalLength = new DataView(view.buffer, view.byteOffset, view.byteLength).getUint32(0, false)
       if (view.length < totalLength) break
 
-      const decoded = yield* Effect.try({
-        try: () => eventCodec.decode(view.subarray(0, totalLength)),
-        catch: (error) =>
-          ProviderShared.eventError(
-            route,
-            `Failed to decode Bedrock Converse event-stream frame: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          ),
-      })
+      let decoded
+      try {
+        decoded = eventCodec.decode(view.subarray(0, totalLength))
+      } catch (error) {
+        throw ProviderShared.eventError(
+          route,
+          `Failed to decode Bedrock Converse event-stream frame: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        )
+      }
       cursor = { buffer: cursor.buffer, offset: cursor.offset + totalLength }
 
       if (decoded.headers[":message-type"]?.value !== "event") continue
@@ -62,16 +67,16 @@ const consumeFrames = (route: string) => (state: FrameBufferState, chunk: Uint8A
       // before handing the object to the chunk schema. JSON decode goes
       // through the shared Schema-driven codec to satisfy the package rule
       // against ad-hoc `JSON.parse` calls.
-      const parsed = (yield* ProviderShared.parseJson(
+      const parsed = ProviderShared.parseJsonSync(
         route,
         payload,
         "Failed to parse Bedrock Converse event-stream payload",
-      )) as Record<string, unknown>
+      ) as Record<string, unknown>
       delete parsed.p
       out.push({ [eventType]: parsed })
     }
     return [cursor, out] as const
-  })
+  }
 
 /**
  * AWS event-stream framing for Bedrock Converse. Each frame is decoded by
@@ -81,7 +86,7 @@ const consumeFrames = (route: string) => (state: FrameBufferState, chunk: Uint8A
  */
 export const framing = (route: string): Framing<object> => ({
   id: "aws-event-stream",
-  frame: (bytes) => bytes.pipe(Stream.mapAccumEffect(() => initialFrameBuffer, consumeFrames(route))),
+  frame: (bytes) => bytes.pipe(Stream.mapAccum(() => initialFrameBuffer, consumeFrames(route))),
 })
 
 export * as BedrockEventStream from "./bedrock-event-stream"
