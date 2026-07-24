@@ -1,9 +1,18 @@
 import { sortBy, pipe } from "remeda"
 
-export function match(str: string, pattern: string) {
-  if (str) str = str.replaceAll("\\", "/")
-  if (pattern) pattern = pattern.replaceAll("\\", "/")
-  let escaped = pattern
+// The compiled regex depends only on the pattern (plus constant platform flags);
+// match() runs per (candidate x rule) on permission/command matching, so memoize
+// the compiled RegExp by pattern rather than rebuilding it every call. Patterns
+// come from config rulesets (a small, repeating set); only the candidate string
+// varies per call.
+const regexCache = new Map<string, RegExp>()
+
+function compiled(pattern: string): RegExp {
+  const cached = regexCache.get(pattern)
+  if (cached) return cached
+  let normalized = pattern
+  if (normalized) normalized = normalized.replaceAll("\\", "/")
+  let escaped = normalized
     .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape special regex chars
     .replace(/\*/g, ".*") // * becomes .*
     .replace(/\?/g, ".") // ? becomes .
@@ -15,7 +24,14 @@ export function match(str: string, pattern: string) {
   }
 
   const flags = process.platform === "win32" ? "si" : "s"
-  return new RegExp("^" + escaped + "$", flags).test(str)
+  const regex = new RegExp("^" + escaped + "$", flags)
+  regexCache.set(pattern, regex)
+  return regex
+}
+
+export function match(str: string, pattern: string) {
+  if (str) str = str.replaceAll("\\", "/")
+  return compiled(pattern).test(str)
 }
 
 export function all(input: string, patterns: Record<string, any>) {
