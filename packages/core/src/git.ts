@@ -181,6 +181,10 @@ const layer = Layer.effect(
     const locked = <A, E, R>(repository: Repository, effect: Effect.Effect<A, E, R>) =>
       locks.withLock(repository.gitDirectory)(effect)
 
+    // repo layout is stable for the process lifetime and discover is called
+    // several times per boot — cache successful discoveries per repo root
+    const discovered = new Map<string, Repository>()
+
     const discover = Effect.fn("Git.repo.discover")(function* (input: AbsolutePath) {
       const dotgit = yield* fs.up({ targets: [".git"], start: input }).pipe(
         Effect.map((matches) => matches[0]),
@@ -189,17 +193,37 @@ const layer = Layer.effect(
       if (!dotgit) return undefined
 
       const cwd = path.dirname(dotgit)
+      const cached = discovered.get(cwd)
+      if (cached) return cached
       const git = run(cwd, proc)
-      const topLevel = yield* git(["rev-parse", "--show-toplevel"])
-      const gitDir = yield* git(["rev-parse", "--git-dir"])
-      const commonDir = yield* git(["rev-parse", "--git-common-dir"])
-      if (gitDir.exitCode !== 0 || commonDir.exitCode !== 0) return undefined
-
-      return new Repository({
-        worktree: AbsolutePath.make(topLevel.exitCode === 0 ? resolvePath(cwd, topLevel.text) : cwd),
-        gitDirectory: AbsolutePath.make(resolvePath(cwd, gitDir.text)),
-        commonDirectory: AbsolutePath.make(resolvePath(cwd, commonDir.text)),
-      })
+      // rev-parse echoes one line per flag, so the common case is one spawn
+      // instead of three
+      const combined = yield* git(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"])
+      let repository: Repository | undefined
+      if (combined.exitCode === 0) {
+        const [topLevel, gitDir, commonDir] = combined.text.split("\n").map((line) => line.trim())
+        if (gitDir && commonDir) {
+          repository = new Repository({
+            worktree: AbsolutePath.make(topLevel ? resolvePath(cwd, topLevel) : cwd),
+            gitDirectory: AbsolutePath.make(resolvePath(cwd, gitDir)),
+            commonDirectory: AbsolutePath.make(resolvePath(cwd, commonDir)),
+          })
+        }
+      } else {
+        // e.g. bare repositories where --show-toplevel fails the whole
+        // invocation: fall back to the tolerant per-flag calls
+        const topLevel = yield* git(["rev-parse", "--show-toplevel"])
+        const gitDir = yield* git(["rev-parse", "--git-dir"])
+        const commonDir = yield* git(["rev-parse", "--git-common-dir"])
+        if (gitDir.exitCode !== 0 || commonDir.exitCode !== 0) return undefined
+        repository = new Repository({
+          worktree: AbsolutePath.make(topLevel.exitCode === 0 ? resolvePath(cwd, topLevel.text) : cwd),
+          gitDirectory: AbsolutePath.make(resolvePath(cwd, gitDir.text)),
+          commonDirectory: AbsolutePath.make(resolvePath(cwd, commonDir.text)),
+        })
+      }
+      if (repository) discovered.set(cwd, repository)
+      return repository
     })
 
     const remote = Effect.fn("Git.remote.get")(function* (repository: Repository, name = "origin") {
