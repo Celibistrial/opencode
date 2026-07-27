@@ -41,6 +41,17 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     const bootstrap = yield* InstanceBootstrap.Service
     const scope = yield* Scope.Scope
     const cache = new Map<string, Entry>()
+    // FSUtil.resolve does a synchronous realpath walk (one lstat per path
+    // component) and runs on every instance-scoped request for the same
+    // handful of directories — alias-cache raw input -> resolved path
+    const resolvedDirs = new Map<string, string>()
+    const resolveDirectory = (input: string) => {
+      const cached = resolvedDirs.get(input)
+      if (cached !== undefined) return cached
+      const resolved = FSUtil.resolve(input)
+      resolvedDirs.set(input, resolved)
+      return resolved
+    }
 
     const boot = (input: LoadInput & { directory: string }) =>
       Effect.gen(function* () {
@@ -106,7 +117,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     })
 
     const load = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
+      const directory = resolveDirectory(input.directory)
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const existing = cache.get(directory)
@@ -124,7 +135,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     }
 
     const reload = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
+      const directory = resolveDirectory(input.directory)
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const previous = cache.get(directory)
@@ -155,7 +166,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     })
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {
-      const directory = FSUtil.resolve(input)
+      const directory = resolveDirectory(input)
       const entry = cache.get(directory)
       if (!entry) return
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
