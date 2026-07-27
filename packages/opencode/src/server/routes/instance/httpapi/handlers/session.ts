@@ -275,9 +275,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof SummarizePayload.Type
     }) {
       yield* revertSvc.cleanup(yield* requireSession(ctx.params.sessionID))
-      const messages = yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
+      const lastUser = Option.getOrUndefined(
+        yield* SessionError.mapStorageNotFound(
+          session.findMessage(ctx.params.sessionID, (message) => message.info.role === "user"),
+        ),
+      )
       const defaultAgent = yield* agentSvc.defaultAgent()
-      const currentAgent = messages.findLast((message) => message.info.role === "user")?.info.agent ?? defaultAgent
+      const currentAgent = lastUser?.info.agent ?? defaultAgent
 
       yield* compactSvc.create({
         sessionID: ctx.params.sessionID,
