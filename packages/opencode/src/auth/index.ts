@@ -55,6 +55,13 @@ const layer = Layer.effect(
     const fsys = yield* FSUtil.Service
     const decode = Schema.decodeUnknownOption(Info)
 
+    // all() is called ~20-30 times during provider/plugin init, each a full
+    // file read + per-entry schema decode. Reuse the decoded result briefly;
+    // set/remove invalidate, and logins from another process appear within
+    // the ttl. The env-content path stays uncached (tests mutate it live).
+    const CACHE_TTL_MS = 5_000
+    let cache: { at: number; data: Record<string, Info> } | undefined
+
     const all = Effect.fn("Auth.all")(function* () {
       if (process.env.OPENCODE_AUTH_CONTENT) {
         try {
@@ -62,8 +69,11 @@ const layer = Layer.effect(
         } catch (err) {}
       }
 
+      if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data
       const data = (yield* fsys.readJson(file).pipe(Effect.orElseSucceed(() => ({})))) as Record<string, unknown>
-      return Record.filterMap(data, (value) => Result.fromOption(decode(value), () => undefined))
+      const decoded = Record.filterMap(data, (value) => Result.fromOption(decode(value), () => undefined))
+      cache = { at: Date.now(), data: decoded }
+      return decoded
     })
 
     const get = Effect.fn("Auth.get")(function* (providerID: string) {
@@ -72,20 +82,24 @@ const layer = Layer.effect(
 
     const set = Effect.fn("Auth.set")(function* (key: string, info: Info) {
       const norm = key.replace(/\/+$/, "")
-      const data = yield* all()
+      cache = undefined
+      const data = { ...(yield* all()) }
       if (norm !== key) delete data[key]
       delete data[norm + "/"]
       yield* fsys
         .writeJson(file, { ...data, [norm]: info }, 0o600)
         .pipe(Effect.mapError(fail("Failed to write auth data")))
+      cache = undefined
     })
 
     const remove = Effect.fn("Auth.remove")(function* (key: string) {
       const norm = key.replace(/\/+$/, "")
-      const data = yield* all()
+      cache = undefined
+      const data = { ...(yield* all()) }
       delete data[key]
       delete data[norm]
       yield* fsys.writeJson(file, data, 0o600).pipe(Effect.mapError(fail("Failed to write auth data")))
+      cache = undefined
     })
 
     return Service.of({ get, all, set, remove })
