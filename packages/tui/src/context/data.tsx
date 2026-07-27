@@ -402,15 +402,56 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       }
     }
 
+    // exactly the types handleEvent switches on — registering them as typed
+    // handlers means unrelated events (notably every v1 message.part.delta
+    // during streaming) no longer pay the event spread below
+    const HANDLED_EVENT_TYPES = [
+      "catalog.updated",
+      "reference.updated",
+      "integration.updated",
+      "session.next.agent.switched",
+      "session.next.model.switched",
+      "session.next.prompted",
+      "session.next.prompt.admitted",
+      "session.next.context.updated",
+      "session.next.synthetic",
+      "session.next.shell.started",
+      "session.next.shell.ended",
+      "session.next.step.started",
+      "session.next.step.ended",
+      "session.next.step.failed",
+      "session.next.text.started",
+      "session.next.text.delta",
+      "session.next.text.ended",
+      "session.next.tool.input.started",
+      "session.next.tool.input.delta",
+      "session.next.tool.input.ended",
+      "session.next.tool.called",
+      "session.next.tool.progress",
+      "session.next.tool.success",
+      "session.next.tool.failed",
+      "session.next.reasoning.started",
+      "session.next.reasoning.delta",
+      "session.next.reasoning.ended",
+      "session.next.retried",
+      "session.next.compaction.started",
+      "session.next.compaction.delta",
+      "session.next.compaction.ended",
+    ] as const
+
     onMount(() => {
-      const unsub = events.subscribe((event, metadata) => {
-        handleEvent({
-          ...event,
-          data: event.properties,
-          location: { directory: metadata.directory, workspaceID: metadata.workspace },
-        } as V2Event)
+      const unsubs = HANDLED_EVENT_TYPES.map((type) =>
+        events.onType(type, (event, metadata) => {
+          handleEvent({
+            ...(event as object),
+            data: (event as { properties: unknown }).properties,
+            location: { directory: metadata.directory, workspaceID: metadata.workspace },
+          } as V2Event)
+        }),
+      )
+      onCleanup(() => {
+        for (const unsub of unsubs) unsub()
       })
-      onCleanup(unsub)
     })
 
     const result = {

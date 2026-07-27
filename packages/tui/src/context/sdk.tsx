@@ -33,14 +33,31 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     let sdk = createSDK()
 
     const handlers = new Set<(event: GlobalEvent) => void>()
+    // per-payload-type handler sets so consumers interested in one event type
+    // don't run (and allocate) for every streamed delta — most subscribers
+    // filter by type, so wildcard fan-out made each event visit ~20 closures
+    const typedHandlers = new Map<string, Set<(event: GlobalEvent) => void>>()
     const emitter = {
       emit(_type: "event", event: GlobalEvent) {
         for (const handler of handlers) handler(event)
+        const typed = typedHandlers.get(event.payload.type)
+        if (typed) for (const handler of typed) handler(event)
       },
       on(_type: "event", handler: (event: GlobalEvent) => void) {
         handlers.add(handler)
         return () => {
           handlers.delete(handler)
+        }
+      },
+      onPayloadType(type: string, handler: (event: GlobalEvent) => void) {
+        let typed = typedHandlers.get(type)
+        if (!typed) {
+          typed = new Set()
+          typedHandlers.set(type, typed)
+        }
+        typed.add(handler)
+        return () => {
+          typed.delete(handler)
         }
       },
     }
