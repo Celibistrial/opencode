@@ -169,14 +169,19 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
           return (yield* config.get()).snapshot !== false
         })
 
+        // the resolved exclude path is static for the lifetime of the state;
+        // memoize the rev-parse spawn but re-check existence per call
+        let excludesPath: string | undefined
         const excludes = Effect.fnUntraced(function* () {
-          const result = yield* git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], {
-            cwd: state.worktree,
-          })
-          const file = result.text.trim()
-          if (!file) return
-          if (!(yield* exists(file))) return
-          return file
+          if (excludesPath === undefined) {
+            const result = yield* git(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], {
+              cwd: state.worktree,
+            })
+            excludesPath = result.text.trim()
+          }
+          if (!excludesPath) return
+          if (!(yield* exists(excludesPath))) return
+          return excludesPath
         })
 
         const sync = Effect.fnUntraced(function* (list: string[] = []) {
@@ -274,9 +279,12 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
           const allow = all.filter((item) => !ignored.has(item))
           if (!allow.length) return
 
-          const large = new Set(
+          // only untracked files can be size-blocked, so don't stat tracked edits
+          const allowed = new Set(allow)
+          const untrackedAllowed = untracked.filter((item) => allowed.has(item))
+          const block = new Set(
             (yield* Effect.all(
-              allow.map((item) =>
+              untrackedAllowed.map((item) =>
                 fs
                   .stat(path.join(state.worktree, item))
                   .pipe(Effect.catch(() => Effect.void))
@@ -291,8 +299,9 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               { concurrency: 8 },
             )).filter((item): item is string => Boolean(item)),
           )
-          const block = new Set(untracked.filter((item) => large.has(item)))
-          yield* sync(Array.from(block))
+          // sync() above already wrote the no-block exclude state; only rewrite
+          // when there is something to block
+          if (block.size > 0) yield* sync(Array.from(block))
           // Stage only the allowed candidate paths so snapshot updates stay scoped.
           yield* stage(allow.filter((item) => !block.has(item)))
         })
