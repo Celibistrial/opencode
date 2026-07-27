@@ -1,5 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer, Context, Option, Schema } from "effect"
+import { KeyedMutex } from "@opencode-ai/core/effect/keyed-mutex"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Snapshot } from "@/snapshot"
@@ -99,7 +100,7 @@ const layer = Layer.effect(
       return []
     })
 
-    const summarize = Effect.fn("SessionSummary.summarize")(function* (input: {
+    const summarizeOnce = Effect.fn("SessionSummary.summarizeOnce")(function* (input: {
       sessionID: SessionID
       messageID: MessageID
     }) {
@@ -124,6 +125,44 @@ const layer = Layer.effect(
       const msgDiffs = yield* computeDiff({ messages })
       target.info.summary = { ...target.info.summary, diffs: msgDiffs }
       yield* sessions.updateMessage(target.info)
+    })
+
+    // summarize is forked on every step-finish, and each run reloads the whole
+    // session and re-runs git diffs over every touched file. When steps finish
+    // faster than a diff computes, serialize runs per (session, message) and
+    // skip a call outright when another caller is already queued — the queued
+    // run reads the latest state anyway, so the result is identical.
+    const mutex = KeyedMutex.makeUnsafe<string>()
+    const queued = new Map<string, number>()
+    const summarize = Effect.fn("SessionSummary.summarize")(function* (input: {
+      sessionID: SessionID
+      messageID: MessageID
+    }) {
+      const key = `${input.sessionID}\0${input.messageID}`
+      if ((queued.get(key) ?? 0) > 0) return
+      queued.set(key, (queued.get(key) ?? 0) + 1)
+      let started = false
+      yield* mutex
+        .withLock(key)(
+          Effect.gen(function* () {
+            started = true
+            const remaining = (queued.get(key) ?? 1) - 1
+            if (remaining === 0) queued.delete(key)
+            else queued.set(key, remaining)
+            yield* summarizeOnce(input)
+          }),
+        )
+        .pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (!started) {
+                const remaining = (queued.get(key) ?? 1) - 1
+                if (remaining === 0) queued.delete(key)
+                else queued.set(key, remaining)
+              }
+            }),
+          ),
+        )
     })
 
     const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
