@@ -69,8 +69,20 @@ const layer = Layer.effect(
       )
     })
 
+    // The MCP SDK reads tokens before every request it sends, so `all()` runs
+    // per JSON-RPC message per remote server. Taking the cross-process file
+    // lock plus a JSON read+decode each time is ~10 syscalls of pure overhead
+    // within a burst of requests — reuse the decoded data for a short window.
+    // Same-process writes invalidate in mutate(); a token refreshed by another
+    // process is observed within the TTL, far below token-expiry timescales.
+    const CACHE_TTL_MS = 5_000
+    let cache: { at: number; data: AuthData } | undefined
+
     const all = Effect.fn("McpAuth.all")(function* () {
-      return yield* read().pipe(flock.withLock(lockKey), Effect.orDie)
+      if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.data
+      const data = yield* read().pipe(flock.withLock(lockKey), Effect.orDie)
+      cache = { at: Date.now(), data }
+      return data
     })
 
     const mutate = Effect.fn("McpAuth.mutate")(function* (update: (data: AuthData) => AuthData | undefined) {
@@ -78,6 +90,7 @@ const layer = Layer.effect(
         const next = update(yield* read())
         if (!next) return
         yield* fs.writeJson(filepath, next, 0o600).pipe(Effect.orDie)
+        cache = undefined
       }).pipe(flock.withLock(lockKey), Effect.orDie)
     })
 
