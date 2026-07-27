@@ -156,7 +156,10 @@ const layer = Layer.effect(
       Global.Path.cache,
       source === "https://models.dev" ? "models.json" : `models-${Hash.fast(source)}.json`,
     )
-    const ttl = Duration.minutes(5)
+    // matches the in-process refresh schedule below; a shorter ttl made every
+    // boot more than 5 minutes after the last one re-download the full 3+ MB
+    // catalog and rebuild all derived state
+    const ttl = Duration.minutes(60)
     const lockKey = `models-dev:${filepath}`
 
     const fresh = Effect.fnUntraced(function* () {
@@ -236,7 +239,12 @@ const layer = Layer.effect(
           // Re-check under the lock: another process may have refreshed between
           // our outer check and lock acquisition.
           if (!force && (yield* fresh())) return
-          yield* fetchAndWrite()
+          const before = yield* fs.readFileStringSafe(filepath).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const text = yield* fetchAndWrite()
+          // the write above bumps the cache mtime either way; only invalidate
+          // and notify subscribers (which rebuild the whole catalog) when the
+          // content actually changed
+          if (before === text) return
           yield* invalidate
           yield* events.publish(Event.Refreshed, {})
         }),
