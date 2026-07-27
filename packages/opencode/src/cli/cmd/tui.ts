@@ -213,6 +213,10 @@ export const TuiThreadCommand = cmd({
         ),
       })
       const client = Rpc.client<typeof rpc>(worker)
+      // start loading the TUI module graph now so it overlaps the IO-bound
+      // worker boot, config load, and session validation below
+      const tuiModules = Promise.all([import("effect"), import("../tui/layer"), import("@/plugin/tui/runtime")])
+      tuiModules.catch(() => {})
       const reload = () => {
         client.call("reload", undefined).catch(() => {})
       }
@@ -267,9 +271,7 @@ export const TuiThreadCommand = cmd({
       }, 1000).unref?.()
 
       try {
-        const { Effect } = await import("effect")
-        const { run } = await import("../tui/layer")
-        const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
+        const [{ Effect }, { run }, { createLegacyTuiPluginHost }] = await tuiModules
         await Effect.runPromise(
           run({
             url: transport.url,
