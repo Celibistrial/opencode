@@ -87,12 +87,21 @@ const layer = Layer.effect(
       const maxLines = options.maxLines ?? resolved.maxLines
       const maxBytes = options.maxBytes ?? resolved.maxBytes
       const direction = options.direction ?? "head"
-      const lines = text.split("\n")
       const totalBytes = Buffer.byteLength(text, "utf-8")
 
-      if (lines.length <= maxLines && totalBytes <= maxBytes) {
-        return { content: text, truncated: false } as const
+      // this runs on every tool result and most outputs fit the limits;
+      // decide the common no-truncation case without allocating a line array
+      if (totalBytes <= maxBytes) {
+        let lineCount = 1
+        for (let idx = text.indexOf("\n"); idx !== -1 && lineCount <= maxLines; idx = text.indexOf("\n", idx + 1)) {
+          lineCount++
+        }
+        if (lineCount <= maxLines) {
+          return { content: text, truncated: false } as const
+        }
       }
+
+      const lines = text.split("\n")
 
       const out: string[] = []
       let i = 0
