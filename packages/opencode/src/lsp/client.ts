@@ -80,11 +80,25 @@ function getSyncKind(capabilities?: ServerCapabilities) {
   return sync?.change
 }
 
+// counts line breaks (\r\n, \r, \n) without allocating a per-line array —
+// this runs over the full previous document text on every incremental didChange
 function endPosition(text: string) {
-  const lines = text.split(/\r\n|\r|\n/)
+  let line = 0
+  let lineStart = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code === 13) {
+      if (i + 1 < text.length && text.charCodeAt(i + 1) === 10) i++
+      line++
+      lineStart = i + 1
+    } else if (code === 10) {
+      line++
+      lineStart = i + 1
+    }
+  }
   return {
-    line: lines.length - 1,
-    character: lines.at(-1)?.length ?? 0,
+    line,
+    character: text.length - lineStart,
   }
 }
 
@@ -551,11 +565,11 @@ export async function create(input: {
       return connection
     },
     notify: {
-      async open(request: { path: string }) {
+      async open(request: { path: string; text?: string }) {
         request.path = Filesystem.normalizePath(
           path.isAbsolute(request.path) ? request.path : path.resolve(input.directory, request.path),
         )
-        const text = await Filesystem.readText(request.path)
+        const text = request.text ?? (await Filesystem.readText(request.path))
         const extension = path.extname(request.path)
         const languageId = LANGUAGE_EXTENSIONS[extension] ?? "plaintext"
 
@@ -626,6 +640,12 @@ export async function create(input: {
         result.set(key, mergedDiagnostics(key))
       }
       return result
+    },
+    diagnosticsFor(filePath: string) {
+      const normalized = Filesystem.normalizePath(
+        path.isAbsolute(filePath) ? filePath : path.resolve(input.directory, filePath),
+      )
+      return mergedDiagnostics(normalized)
     },
     async waitForDiagnostics(request: { path: string; version: number; mode?: "document" | "full"; after?: number }) {
       const normalizedPath = Filesystem.normalizePath(

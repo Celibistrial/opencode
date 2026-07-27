@@ -7,10 +7,11 @@ import { pathToFileURL, fileURLToPath } from "url"
 import * as LSPServer from "./server"
 import { Config } from "@/config/config"
 import { Process } from "@/util/process"
+import { Filesystem } from "@/util/filesystem"
 import { spawn as lspspawn } from "./launch"
 import { Effect, Layer, Context, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
-import { containsPath } from "@/project/instance-context"
+import { containsPath, type InstanceContext } from "@/project/instance-context"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LspEvent } from "@opencode-ai/schema/lsp-event"
@@ -114,6 +115,10 @@ interface State {
   servers: Record<string, LSPServer.Info>
   broken: Set<string>
   spawning: Map<string, Promise<LSPClient.Info | undefined>>
+  // root resolution walks the directory tree with existsSync per marker; every
+  // root() implementation only looks at the file's directory, so cache per
+  // (server, dirname) for the instance lifetime
+  roots: Map<string, Promise<string | undefined>>
 }
 
 export interface Interface {
@@ -122,6 +127,7 @@ export interface Interface {
   readonly hasClients: (file: string) => Effect.Effect<boolean>
   readonly touchFile: (input: string, diagnostics?: "document" | "full") => Effect.Effect<void>
   readonly diagnostics: () => Effect.Effect<Record<string, LSPClient.Diagnostic[]>>
+  readonly diagnosticsFor: (file: string) => Effect.Effect<LSPClient.Diagnostic[]>
   readonly hover: (input: LocInput) => Effect.Effect<any>
   readonly definition: (input: LocInput) => Effect.Effect<any[]>
   readonly references: (input: LocInput) => Effect.Effect<any[]>
@@ -193,6 +199,7 @@ const layer = Layer.effect(
           servers,
           broken: new Set(),
           spawning: new Map(),
+          roots: new Map(),
         }
 
         yield* Effect.addFinalizer(() =>
@@ -204,6 +211,15 @@ const layer = Layer.effect(
         return s
       }),
     )
+
+    const resolveRoot = (s: State, server: LSPServer.Info, file: string, ctx: InstanceContext) => {
+      const key = server.id + "\0" + path.dirname(file)
+      const cached = s.roots.get(key)
+      if (cached) return cached
+      const task = server.root(file, ctx)
+      s.roots.set(key, task)
+      return task
+    }
 
     const getClients = Effect.fnUntraced(function* (file: string) {
       const ctx = yield* InstanceState.context
@@ -254,7 +270,7 @@ const layer = Layer.effect(
         for (const server of Object.values(s.servers)) {
           if (server.extensions.length && !server.extensions.includes(extension)) continue
 
-          const root = await server.root(file, ctx)
+          const root = await resolveRoot(s, server, file, ctx)
           if (!root) continue
           if (s.broken.has(root + server.id)) continue
 
@@ -332,7 +348,7 @@ const layer = Layer.effect(
         const extension = path.parse(file).ext || file
         for (const server of Object.values(s.servers)) {
           if (server.extensions.length && !server.extensions.includes(extension)) continue
-          const root = await server.root(file, ctx)
+          const root = await resolveRoot(s, server, file, ctx)
           if (!root) continue
           if (s.broken.has(root + server.id)) continue
           return true
@@ -343,21 +359,32 @@ const layer = Layer.effect(
 
     const touchFile = Effect.fn("LSP.touchFile")(function* (input: string, diagnostics?: "document" | "full") {
       yield* Effect.logInfo("touching file", { file: input })
+      const ctx = yield* InstanceState.context
       const clients = yield* getClients(input)
+      if (clients.length === 0) return
+      // read the file once and share it across the client fan-out instead of
+      // letting each client re-read it in notify.open
+      const normalized = Filesystem.normalizePath(
+        path.isAbsolute(input) ? input : path.resolve(ctx.directory, input),
+      )
       yield* Effect.promise(() =>
-        Promise.all(
-          clients.map(async (client) => {
-            const after = Date.now()
-            const version = await client.notify.open({ path: input })
-            if (!diagnostics) return
-            return client.waitForDiagnostics({
-              path: input,
-              version,
-              mode: diagnostics,
-              after,
-            })
-          }),
-        ).catch(() => {}),
+        Filesystem.readText(normalized)
+          .then((text) =>
+            Promise.all(
+              clients.map(async (client) => {
+                const after = Date.now()
+                const version = await client.notify.open({ path: input, text })
+                if (!diagnostics) return
+                return client.waitForDiagnostics({
+                  path: input,
+                  version,
+                  mode: diagnostics,
+                  after,
+                })
+              }),
+            ),
+          )
+          .catch(() => {}),
       )
     })
 
@@ -372,6 +399,11 @@ const layer = Layer.effect(
         }
       }
       return results
+    })
+
+    const diagnosticsFor = Effect.fn("LSP.diagnosticsFor")(function* (file: string) {
+      const all = yield* runAll(async (client) => client.diagnosticsFor(file))
+      return all.flat()
     })
 
     const hover = Effect.fn("LSP.hover")(function* (input: LocInput) {
@@ -483,6 +515,7 @@ const layer = Layer.effect(
       hasClients,
       touchFile,
       diagnostics,
+      diagnosticsFor,
       hover,
       definition,
       references,

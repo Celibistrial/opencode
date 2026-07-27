@@ -9,6 +9,7 @@ import { createTwoFilesPatch, diffLines } from "diff"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { trimDiff } from "./edit"
 import { LSP } from "@/lsp/lsp"
+import type { LSPClient } from "@/lsp/client"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import DESCRIPTION from "./apply_patch.txt"
 import { FileSystem } from "@opencode-ai/core/filesystem"
@@ -262,13 +263,18 @@ export const ApplyPatchTool = Tool.define(
         yield* events.publish(Watcher.Event.Updated, update)
       }
 
-      // Notify LSP of file changes and collect diagnostics
-      for (const change of fileChanges) {
-        if (change.type === "delete") continue
-        const target = change.movePath ?? change.filePath
-        yield* lsp.touchFile(target, "document")
+      // Notify LSP of file changes and collect diagnostics for the touched
+      // files only; each touch can block on a diagnostics wait, so run them
+      // concurrently instead of paying the waits back to back
+      const targets = fileChanges.filter((c) => c.type !== "delete").map((c) => c.movePath ?? c.filePath)
+      yield* Effect.forEach(targets, (target) => lsp.touchFile(target, "document"), {
+        concurrency: 8,
+        discard: true,
+      })
+      const diagnostics: Record<string, LSPClient.Diagnostic[]> = {}
+      for (const target of targets) {
+        diagnostics[FSUtil.normalizePath(target)] = yield* lsp.diagnosticsFor(target)
       }
-      const diagnostics = yield* lsp.diagnostics()
 
       // Generate output summary
       const summaryLines = fileChanges.map((change) => {
