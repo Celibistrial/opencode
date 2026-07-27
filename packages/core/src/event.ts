@@ -300,19 +300,25 @@ export const layerWith = (options?: LayerOptions) =>
                               }),
                             )
                           }
-                          const stored = yield* db
-                            .select({ aggregateID: EventTable.aggregate_id, seq: EventTable.seq })
-                            .from(EventTable)
-                            .where(eq(EventTable.id, event.id))
-                            .get()
-                            .pipe(Effect.orDie)
-                          if (stored)
-                            yield* Effect.die(
-                              new InvalidDurableEventError({
-                                type: event.type,
-                                message: `Event ${event.id} already exists at aggregate ${stored.aggregateID} sequence ${stored.seq}`,
-                              }),
-                            )
+                          // duplicate ids can only come from replayed events; the
+                          // normal publish path generates a fresh id, so skip the
+                          // per-publish lookup there (the primary key on EventTable
+                          // still rejects a collision as a backstop)
+                          if (input) {
+                            const stored = yield* db
+                              .select({ aggregateID: EventTable.aggregate_id, seq: EventTable.seq })
+                              .from(EventTable)
+                              .where(eq(EventTable.id, event.id))
+                              .get()
+                              .pipe(Effect.orDie)
+                            if (stored)
+                              yield* Effect.die(
+                                new InvalidDurableEventError({
+                                  type: event.type,
+                                  message: `Event ${event.id} already exists at aggregate ${stored.aggregateID} sequence ${stored.seq}`,
+                                }),
+                              )
+                          }
                           const committed = {
                             ...event,
                             durable: { aggregateID, seq, version: durable.version },
