@@ -308,7 +308,13 @@ export const {
         }
 
         case "session.status": {
-          setStore("session_status", event.properties.sessionID, event.properties.status)
+          // the server re-emits "busy" on every agent step; idle/busy carry no
+          // other fields, so a same-type write is content-identical — skip it
+          // to avoid notifying every status subscriber ~once per tool call
+          const next = event.properties.status
+          const current = store.session_status[event.properties.sessionID]
+          if (current && current.type === next.type && next.type !== "retry") break
+          setStore("session_status", event.properties.sessionID, next)
           break
         }
 

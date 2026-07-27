@@ -167,6 +167,11 @@ const context = createContext<{
   providers: () => ReadonlyMap<string, Provider>
   sync: ReturnType<typeof useSync>
   tui: ReturnType<typeof useTuiConfig>
+  // created once per session view instead of per assistant message — each
+  // useCommandShortcut instance is a keymap state listener that recomputes on
+  // every keymap emit, so per-message instances made that cost O(messages)
+  childShortcut: () => string
+  backgroundShortcut: () => string
 }>()
 
 function use() {
@@ -178,6 +183,8 @@ function use() {
 export function Session() {
   const setEpilogue = useEpilogue()
   const clipboard = useClipboard()
+  const childShortcut = useCommandShortcut("session.child.first")
+  const backgroundShortcut = useCommandShortcut("session.background")
   const writeExport = async (file: string, content: string) => {
     await mkdir(path.dirname(file), { recursive: true })
     await writeFile(file, content)
@@ -1200,6 +1207,8 @@ export function Session() {
           providers,
           sync,
           tui: tuiConfig,
+          childShortcut,
+          backgroundShortcut,
         }}
       >
         <box flexDirection="row" flexGrow={1} minHeight={0}>
@@ -1518,8 +1527,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     return props.message.time.completed - user.time.created
   })
 
-  const childShortcut = useCommandShortcut("session.child.first")
-  const backgroundShortcut = useCommandShortcut("session.background")
+  const childShortcut = ctx.childShortcut
+  const backgroundShortcut = ctx.backgroundShortcut
 
   return (
     <>

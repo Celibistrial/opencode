@@ -247,11 +247,22 @@ export function useLeaderActive(): Accessor<boolean> {
   return useKeymapSelector((keymap: OpenTuiKeymap) => keymap.getPendingSequence()[0]?.tokenName === LEADER_TOKEN)
 }
 
+// the keymap caches getCommandBindings results by the identity of the
+// `commands` array, so reuse one array per command name instead of allocating
+// a fresh one per call (which made the cache miss every time)
+const shortcutQueries = new Map<string, [string]>()
+
 export function useCommandShortcut(command: string): Accessor<string> {
   const config = useTuiConfig()
+  let query = shortcutQueries.get(command)
+  if (!query) {
+    query = [command]
+    shortcutQueries.set(command, query)
+  }
+  const commands = query
   return useKeymapSelector((keymap: OpenTuiKeymap) =>
     formatKeySequence(
-      keymap.getCommandBindings({ visibility: "registered", commands: [command] }).get(command)?.[0]?.sequence,
+      keymap.getCommandBindings({ visibility: "registered", commands }).get(command)?.[0]?.sequence,
       config,
     ),
   )

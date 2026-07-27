@@ -209,7 +209,6 @@ export function Prompt(props: PromptProps) {
   const [auto, setAuto] = createSignal<AutocompleteRef>()
   const workspace = usePromptWorkspace(props.sessionID)
   const move = usePromptMove({ projectID: project.project, sessionID: () => props.sessionID })
-  const [cursorVersion, setCursorVersion] = createSignal(0)
   const currentProviderLabel = createMemo(() => local.model.parsed().provider)
   const hasRightContent = createMemo(() => Boolean(props.right))
 
@@ -393,7 +392,7 @@ export function Prompt(props: PromptProps) {
         name: "session.interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle",
+        enabled: () => status().type !== "idle",
         run: () => {
           if (auto()?.visible) return
           if (!input.focused) return
@@ -732,13 +731,15 @@ export function Prompt(props: PromptProps) {
     )
   }
 
-  const stashCommands = createMemo(() =>
-    [
+  // enabled fields are lazy functions evaluated by the keymap on demand, so
+  // this list is static — keeping it (and the layer registration) off the
+  // per-keystroke reactive graph
+  const stashCommands = [
       {
         title: "Stash prompt",
         name: "prompt.stash",
         category: "Prompt",
-        enabled: !!store.prompt.input,
+        enabled: () => !!store.prompt.input,
         run: () => {
           if (!store.prompt.input) return
           stash.push({
@@ -756,7 +757,7 @@ export function Prompt(props: PromptProps) {
         title: "Stash pop",
         name: "prompt.stash.pop",
         category: "Prompt",
-        enabled: stash.list().length > 0,
+        enabled: () => stash.list().length > 0,
         run: () => {
           const entry = stash.pop()
           if (entry) {
@@ -772,7 +773,7 @@ export function Prompt(props: PromptProps) {
         title: "Stash list",
         name: "prompt.stash.list",
         category: "Prompt",
-        enabled: stash.list().length > 0,
+        enabled: () => stash.list().length > 0,
         run: () => {
           dialog.replace(() => (
             <DialogStash
@@ -789,17 +790,16 @@ export function Prompt(props: PromptProps) {
     ].map((entry) => ({
       namespace: "palette",
       ...entry,
-    })),
-  )
+    }))
 
   useBindings(() => ({
-    commands: stashCommands(),
+    commands: stashCommands,
   }))
 
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: inputTarget() !== undefined && !props.disabled,
+      enabled: () => inputTarget() !== undefined && !props.disabled,
       bindings: tuiConfig.keybinds.get("prompt.paste"),
     }
   })
@@ -807,7 +807,7 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: inputTarget() !== undefined && !props.disabled && store.prompt.input !== "",
+      enabled: () => inputTarget() !== undefined && !props.disabled && store.prompt.input !== "",
       bindings: tuiConfig.keybinds.get("prompt.clear"),
     }
   })
@@ -815,16 +815,12 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: (() => {
-        cursorVersion()
-        return (
-          inputTarget() !== undefined &&
-          !props.disabled &&
-          store.mode === "normal" &&
-          !auto()?.visible &&
-          input?.visualCursor.offset === 0
-        )
-      })(),
+      enabled: () =>
+        inputTarget() !== undefined &&
+        !props.disabled &&
+        store.mode === "normal" &&
+        !auto()?.visible &&
+        input?.visualCursor.offset === 0,
       bindings: [
         {
           key: "!",
@@ -842,7 +838,7 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: inputTarget() !== undefined && store.mode === "shell",
+      enabled: () => inputTarget() !== undefined && store.mode === "shell",
       bindings: [{ key: "escape", desc: "Exit shell mode", group: "Prompt", cmd: () => setStore("mode", "normal") }],
     }
   })
@@ -850,10 +846,7 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: (() => {
-        cursorVersion()
-        return inputTarget() !== undefined && store.mode === "shell" && input?.visualCursor.offset === 0
-      })(),
+      enabled: () => inputTarget() !== undefined && store.mode === "shell" && input?.visualCursor.offset === 0,
       bindings: [{ key: "backspace", desc: "Exit shell mode", group: "Prompt", cmd: () => setStore("mode", "normal") }],
     }
   })
@@ -861,10 +854,7 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: (() => {
-        cursorVersion()
-        return inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined
-      })(),
+      enabled: () => inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined,
       commands: [
         {
           name: "prompt.history.previous",
@@ -893,10 +883,7 @@ export function Prompt(props: PromptProps) {
   useBindings(() => {
     return {
       target: inputTarget,
-      enabled: (() => {
-        cursorVersion()
-        return inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined
-      })(),
+      enabled: () => inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined,
       commands: [
         {
           name: "prompt.history.next",
@@ -1378,9 +1365,7 @@ export function Prompt(props: PromptProps) {
                 setStore("prompt", "input", value)
                 auto()?.onInput(value)
                 syncExtmarksWithPromptParts()
-                setCursorVersion((value) => value + 1)
               }}
-              onCursorChange={() => setCursorVersion((value) => value + 1)}
               onKeyDown={(e: { preventDefault(): void }) => {
                 if (props.disabled) {
                   e.preventDefault()
