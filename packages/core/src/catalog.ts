@@ -208,8 +208,19 @@ const layer = Layer.effect(
         }),
 
         available: Effect.fn("CatalogV2.model.available")(function* () {
+          // filter by provider before projecting: model.all() would project and
+          // sort the entire catalog (thousands of models) only for most of it
+          // to be discarded here — connected providers are typically a handful
           const providers = new Set((yield* result.provider.available()).map((provider) => provider.id))
-          return (yield* result.model.all()).filter((model) => providers.has(model.providerID) && model.enabled)
+          return pipe(
+            Array.fromIterable(state.get().providers.values()),
+            Array.filter((record) => providers.has(record.provider.id)),
+            Array.flatMap((record) =>
+              Array.fromIterable(record.models.values()).map((model) => projectModel(model, record.provider)),
+            ),
+            Array.filter((model) => model.enabled),
+            Array.sortWith((item) => item.time.released, Order.flip(Order.Number)),
+          )
         }),
 
         default: Effect.fn("CatalogV2.model.default")(function* () {
