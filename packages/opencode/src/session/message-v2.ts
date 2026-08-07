@@ -17,6 +17,7 @@ import {
 } from "@opencode-ai/core/v1/session"
 
 import { NamedError } from "@opencode-ai/core/util/error"
+import { LLMError } from "@opencode-ai/llm"
 import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -701,6 +702,33 @@ export function fromError(
         },
         { cause: e },
       ).toObject()
+    // Native runtime errors are `LLMError` (an Error subclass) — must be matched
+    // BEFORE the generic `e instanceof Error` case below, which would otherwise
+    // swallow them into UnknownError (no status, not retryable, overflow lost).
+    // This mirrors the `APICallError` branch so native classifies identically.
+    case e instanceof LLMError: {
+      const parsed = ProviderError.parseLLMError(e)
+      if (parsed.type === "context_overflow") {
+        return new ContextOverflowError(
+          {
+            message: parsed.message,
+            responseBody: parsed.responseBody,
+          },
+          { cause: e },
+        ).toObject()
+      }
+      return new APIError(
+        {
+          message: parsed.message,
+          statusCode: parsed.statusCode,
+          isRetryable: parsed.isRetryable,
+          responseHeaders: parsed.responseHeaders,
+          responseBody: parsed.responseBody,
+          metadata: parsed.metadata,
+        },
+        { cause: e },
+      ).toObject()
+    }
     case e instanceof Error:
       return new NamedError.Unknown({ message: errorMessage(e) }, { cause: e }).toObject()
     default:

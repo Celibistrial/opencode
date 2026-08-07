@@ -10,7 +10,10 @@ export const path = makeGlobalNode({ service: Path.Path, layer: NodePath.layer, 
 export const httpClient = makeGlobalNode({ service: HttpClient.HttpClient, layer: FetchHttpClient.layer, deps: [] })
 export const requestExecutor = makeGlobalNode({
   service: RequestExecutor.Service,
-  layer: RequestExecutor.layer,
+  // retries: 0 — the session processor owns retry/backoff (retry status UI,
+  // reasoning reset, context-overflow compaction). Native transport-level retry
+  // would run underneath it and hide those, so surface errors to the processor.
+  layer: RequestExecutor.makeLayer({ retries: 0 }),
   deps: [httpClient],
 })
 export const llmClient = makeGlobalNode({ service: LLMClient.Service, layer: LLMClient.layer, deps: [requestExecutor] })

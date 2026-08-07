@@ -4,7 +4,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schedule } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool } from "ai"
 import type { LLMEvent } from "@opencode-ai/llm"
@@ -31,6 +31,68 @@ import { LLMNativeRuntime } from "./llm/native-runtime"
 import { LLMRequestPrep } from "./llm/request"
 
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+
+// --- B: upstream delta coalescing -------------------------------------------
+// Streamed text/reasoning arrive as many tiny deltas; each one crosses the
+// Effect Stream channel and runs the processor's `Stream.tap(handleEvent)`
+// Effect (a `runLoop` schedule). Collapsing a window of consecutive same-block
+// deltas into one event cuts that per-token overhead. The window is small so
+// non-delta events (tool calls, step/finish) are delayed by at most this many
+// ms. 0 disables coalescing entirely (escape hatch / A-B benchmarking).
+// NB: parse then range-check — `Number(x) || 25` would turn an explicit "0"
+// (the disable value) back into 25, making the escape hatch a no-op.
+const rawCoalesceMs = Number(process.env["OPENCODE_LLM_COALESCE_MS"])
+const LLM_COALESCE_MS = Number.isFinite(rawCoalesceMs) ? Math.max(0, Math.min(250, rawCoalesceMs)) : 25
+// Upper bound on events per window; the window almost always flushes on the
+// timer well before this, so it only caps pathological bursts.
+const LLM_COALESCE_CHUNK = 1024
+
+type StreamingDelta = Extract<LLMEvent, { readonly type: "text-delta" | "reasoning-delta" }>
+
+// Merge only ADJACENT deltas of the same type and block id, preserving order and
+// passing every other event through untouched. `run` is a private mutable
+// accumulator; each flush emits a fresh plain literal (no Schema validation, as
+// in ai-sdk.ts) so upstream event objects are never mutated.
+function mergeAdjacentDeltas(events: ReadonlyArray<LLMEvent>): LLMEvent[] {
+  const out: LLMEvent[] = []
+  let run: { type: StreamingDelta["type"]; id: string; text: string; meta: StreamingDelta["providerMetadata"] } | undefined
+  const flush = () => {
+    if (!run) return
+    out.push(
+      run.type === "text-delta"
+        ? { type: "text-delta", id: run.id, text: run.text, providerMetadata: run.meta }
+        : { type: "reasoning-delta", id: run.id, text: run.text, providerMetadata: run.meta },
+    )
+    run = undefined
+  }
+  for (const event of events) {
+    if (event.type === "text-delta" || event.type === "reasoning-delta") {
+      if (run && run.type === event.type && run.id === event.id) {
+        run.text += event.text
+        if (event.providerMetadata) run.meta = event.providerMetadata
+        continue
+      }
+      flush()
+      run = { type: event.type, id: event.id, text: event.text, meta: event.providerMetadata }
+      continue
+    }
+    flush()
+    out.push(event)
+  }
+  flush()
+  return out
+}
+
+function coalesceDeltaEvents(stream: Stream.Stream<LLMEvent, unknown>): Stream.Stream<LLMEvent, unknown> {
+  if (LLM_COALESCE_MS === 0) return stream
+  return stream.pipe(
+    // groupedWithin emits an array of the events seen in each window.
+    Stream.groupedWithin(LLM_COALESCE_CHUNK, `${LLM_COALESCE_MS} millis`),
+    Stream.map((chunk) => mergeAdjacentDeltas(chunk)),
+    Stream.flattenIterable,
+  )
+}
+// ----------------------------------------------------------------------------
 
 export type StreamInput = {
   user: SessionV1.User
@@ -365,20 +427,35 @@ const live: Layer.Layer<
 
             const result = yield* run({ ...input, abort: ctrl.signal })
 
-            if (result.type === "native") return result.stream
-
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
             // already returns one; AI SDK streams are converted here.
-            const state = LLMAISDK.adapterState()
-            return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
-              e instanceof Error ? e : new Error(String(e)),
-            ).pipe(
-              // toLLMEvents is pure/sync — Stream.map (sync) + flattenArray avoids
-              // scheduling an Effect fiber per streamed token (mapEffect + flatMap did),
-              // a major streaming-CPU cost.
-              Stream.map((event) => LLMAISDK.toLLMEvents(state, event)),
-              Stream.flattenArray,
-            )
+            let events: Stream.Stream<LLMEvent, unknown>
+            if (result.type === "native") {
+              // The native executor runs with transport retry disabled (the session
+              // processor owns retries on the main path). Direct callers — e.g. title
+              // generation — pass their own `retries`; honor it here so the native
+              // path matches the AI-SDK path's `maxRetries: input.retries ?? 0`.
+              const retries = input.retries ?? 0
+              events = retries > 0 ? result.stream.pipe(Stream.retry(Schedule.recurs(retries))) : result.stream
+            } else {
+              // adapterState is created ONCE per stream — it carries block IDs and
+              // counters across tokens, so it must not be rebuilt per event.
+              const state = LLMAISDK.adapterState()
+              events = Stream.fromAsyncIterable(result.result.fullStream, (e) =>
+                e instanceof Error ? e : new Error(String(e)),
+              ).pipe(
+                // toLLMEvents is pure/sync — Stream.map (sync) + flattenIterable avoids
+                // scheduling an Effect fiber per streamed token (mapEffect + flatMap did),
+                // a major streaming-CPU cost.
+                Stream.map((event) => LLMAISDK.toLLMEvents(state, event)),
+                Stream.flattenIterable,
+              )
+            }
+
+            // B: collapse runs of same-block text/reasoning deltas into fewer,
+            // larger events BEFORE the processor's per-event Stream.tap(handleEvent).
+            // Applied to both runtimes so the native default path benefits too.
+            return coalesceDeltaEvents(events)
           }),
         ),
       )

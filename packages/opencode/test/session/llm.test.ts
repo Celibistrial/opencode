@@ -177,9 +177,8 @@ describe("session.llm.ai-sdk adapter", () => {
 
   const adapt = (events: ReadonlyArray<AISDKAdapterEvent>) => {
     const state = LLMAISDK.adapterState()
-    return Effect.runPromise(
-      Effect.forEach(events, (event) => LLMAISDK.toLLMEvents(state, event)).pipe(Effect.map((items) => items.flat())),
-    )
+    // toLLMEvents is synchronous — flat-map its per-event arrays directly.
+    return events.flatMap((event) => [...LLMAISDK.toLLMEvents(state, event)])
   }
   // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- tests defensive adapter branches outside AI SDK's current typed surface
   const uncheckedAdapterEvent = (input: unknown) => input as AISDKAdapterEvent
@@ -335,15 +334,13 @@ describe("session.llm.ai-sdk adapter", () => {
 
   test("preserves tool-error cause", async () => {
     const error = new PermissionV1.RejectedError()
-    const events = await Effect.runPromise(
-      LLMAISDK.toLLMEvents(LLMAISDK.adapterState(), {
-        type: "tool-error",
-        toolCallId: "call_123",
-        toolName: "bash",
-        input: {},
-        error,
-      }),
-    )
+    const events = LLMAISDK.toLLMEvents(LLMAISDK.adapterState(), {
+      type: "tool-error",
+      toolCallId: "call_123",
+      toolName: "bash",
+      input: {},
+      error,
+    })
 
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
@@ -393,9 +390,7 @@ describe("session.llm.ai-sdk adapter", () => {
     // contract: after finish, the same state can be reused and starts fresh.
     const state = LLMAISDK.adapterState()
     const run = (events: ReadonlyArray<AISDKAdapterEvent>) =>
-      Effect.runPromise(
-        Effect.forEach(events, (event) => LLMAISDK.toLLMEvents(state, event)).pipe(Effect.map((items) => items.flat())),
-      )
+      events.flatMap((event) => [...LLMAISDK.toLLMEvents(state, event)])
 
     await run([
       { type: "start-step", request: {}, warnings: [] },
@@ -789,15 +784,20 @@ describe("session.llm.stream", () => {
           model: { providerID: ProviderV2.ID.make(vivgridFixture.providerID), modelID: resolved.id, variant: "high" },
         } satisfies SessionV1.User
 
-        yield* drain({
-          user,
-          sessionID,
-          model: resolved,
-          agent,
-          system: ["You are a helpful assistant."],
-          messages: [{ role: "user", content: "Hello" }],
-          tools: {},
-        })
+        // Native runtime is the default; this test asserts the AI-SDK request
+        // payload, so pin it to the AI-SDK fallback path.
+        yield* drainWith(
+          AppNodeBuilder.build(LLM.node, [[RuntimeFlags.node, RuntimeFlags.layer({ experimentalNativeLlm: false })]]),
+          {
+            user,
+            sessionID,
+            model: resolved,
+            agent,
+            system: ["You are a helpful assistant."],
+            messages: [{ role: "user", content: "Hello" }],
+            tools: {},
+          },
+        )
 
         const capture = yield* Effect.promise(() => request)
         const body = capture.body
@@ -1217,15 +1217,20 @@ describe("session.llm.stream", () => {
           model: { providerID: ProviderV2.ID.make("openai"), modelID: resolved.id, variant: "high" },
         } satisfies SessionV1.User
 
-        yield* drain({
-          user,
-          sessionID,
-          model: resolved,
-          agent,
-          system: ["You are a helpful assistant."],
-          messages: [{ role: "user", content: "Hello" }],
-          tools: {},
-        })
+        // Native runtime is the default; this test asserts the AI-SDK request
+        // payload, so pin it to the AI-SDK fallback path.
+        yield* drainWith(
+          AppNodeBuilder.build(LLM.node, [[RuntimeFlags.node, RuntimeFlags.layer({ experimentalNativeLlm: false })]]),
+          {
+            user,
+            sessionID,
+            model: resolved,
+            agent,
+            system: ["You are a helpful assistant."],
+            messages: [{ role: "user", content: "Hello" }],
+            tools: {},
+          },
+        )
 
         const capture = yield* Effect.promise(() => request)
         const body = capture.body

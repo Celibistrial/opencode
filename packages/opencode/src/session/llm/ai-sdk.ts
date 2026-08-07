@@ -137,13 +137,23 @@ export function toLLMEvents(
       ]
     }
 
+    // Hot path: text-delta / reasoning-delta / tool-input-delta fire per streamed
+    // token. Returning a plain typed literal skips the Effect Schema validation
+    // that the LLMEvent.*Delta() constructors run inside `.make()` on every call.
+    // Validation buys nothing for objects we construct ourselves here, and per
+    // token it was a measurable chunk of streaming CPU (the `toLLMEvents` frames
+    // in the profile were dominated by Schema parsing). The literal is checked
+    // structurally against the LLMEvent union by the return type — a shape drift
+    // is a typecheck error, not a runtime surprise. Lower-frequency events below
+    // keep the validated `.make` constructors.
     case "text-delta":
       return [
-        LLMEvent.textDelta({
+        {
+          type: "text-delta",
           id: currentTextID(state, event.id),
           text: event.text,
           providerMetadata: providerMetadata(event.providerMetadata),
-        }),
+        },
       ]
 
     case "text-end": {
@@ -169,11 +179,12 @@ export function toLLMEvents(
 
     case "reasoning-delta":
       return [
-        LLMEvent.reasoningDelta({
+        {
+          type: "reasoning-delta",
           id: currentReasoningID(state, event.id),
           text: event.text,
           providerMetadata: providerMetadata(event.providerMetadata),
-        }),
+        },
       ]
 
     case "reasoning-end": {
@@ -200,11 +211,12 @@ export function toLLMEvents(
 
     case "tool-input-delta":
       return [
-        LLMEvent.toolInputDelta({
+        {
+          type: "tool-input-delta",
           id: event.id,
           name: state.toolNames[event.id] ?? "unknown",
           text: event.delta ?? "",
-        }),
+        },
       ]
 
     case "tool-input-end":

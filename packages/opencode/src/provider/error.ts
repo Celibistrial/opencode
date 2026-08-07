@@ -2,7 +2,7 @@ import { APICallError } from "ai"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderV2 } from "@opencode-ai/core/provider"
-import { isContextOverflow } from "@opencode-ai/llm"
+import { isContextOverflow, isContextOverflowFailure, LLMError } from "@opencode-ai/llm"
 
 export class HeaderTimeoutError extends Error {
   public override readonly name = "ProviderHeaderTimeoutError"
@@ -182,6 +182,44 @@ export function parseAPICallError(input: { providerID: ProviderV2.ID; error: API
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,
+  }
+}
+
+// Native runtime (`@opencode-ai/llm`) fails the stream with a typed `LLMError`
+// (an Error subclass) rather than AI-SDK's `APICallError`. Normalize it into the
+// same `ParsedAPICallError` shape so `MessageV2.fromError` classifies native and
+// AI-SDK errors identically (name, retryability, context-overflow → compaction).
+export function parseLLMError(error: LLMError): ParsedAPICallError {
+  const reason = error.reason
+  const http = "http" in reason ? reason.http : undefined
+  const responseBody = http?.body
+  // `reason.http.response.status` covers HTTP failures; ProviderInternal /
+  // UnknownProvider also carry a top-level `status`.
+  const statusFromReason = "status" in reason && typeof reason.status === "number" ? reason.status : undefined
+  const statusCode = http?.response?.status ?? statusFromReason
+  // Match parseAPICallError: an explicit context-overflow classification OR a 413
+  // (payload too large) is a context overflow that should drive compaction.
+  if (isContextOverflowFailure(error) || statusCode === 413) {
+    return {
+      type: "context_overflow",
+      message: reason.message,
+      responseBody,
+    }
+  }
+  // Transport faults (incl. mid-stream read failures, now tagged TransportReason)
+  // are transient — the AI-SDK path treats the equivalents (ECONNRESET,
+  // ResponseStreamError, ZlibError) as retryable, so match that. `InvalidProviderOutput`
+  // is deliberately EXCLUDED: it also covers malformed/unparseable provider output
+  // and forced-tool decode failures, which are not transient and must fail fast.
+  const transient = reason._tag === "Transport"
+  return {
+    type: "api_error",
+    message: reason.message,
+    statusCode,
+    isRetryable: error.retryable || transient,
+    responseHeaders: http?.response?.headers,
+    responseBody,
+    metadata: http?.requestId ? { requestId: http.requestId } : undefined,
   }
 }
 

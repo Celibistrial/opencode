@@ -363,22 +363,33 @@ const retryStatusFailures = <A, R>(
     )
   })
 
-export const layer: Layer.Layer<Service, never, HttpClient.HttpClient> = Layer.effect(
-  Service,
-  Effect.gen(function* () {
-    const http = yield* HttpClient.HttpClient
-    const executeOnce = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.gen(function* () {
-        const redactedNames = yield* Headers.CurrentRedactedNames
-        return yield* http
-          .execute(request)
-          .pipe(Effect.mapError(toHttpError(redactedNames)), Effect.flatMap(statusError(request, redactedNames)))
+// `retries` controls the built-in transport retry (429/503/504/529 + 5xx with
+// backoff/retry-after). Consumers that own retries at a higher layer (e.g.
+// opencode's session processor, which also publishes retry status, resets
+// reasoning, and drives context-overflow compaction) should pass `retries: 0`
+// so failures surface immediately instead of being retried twice.
+export const makeLayer = (options?: {
+  readonly retries?: number
+}): Layer.Layer<Service, never, HttpClient.HttpClient> =>
+  Layer.effect(
+    Service,
+    Effect.gen(function* () {
+      const http = yield* HttpClient.HttpClient
+      const retries = options?.retries ?? MAX_RETRIES
+      const executeOnce = (request: HttpClientRequest.HttpClientRequest) =>
+        Effect.gen(function* () {
+          const redactedNames = yield* Headers.CurrentRedactedNames
+          return yield* http
+            .execute(request)
+            .pipe(Effect.mapError(toHttpError(redactedNames)), Effect.flatMap(statusError(request, redactedNames)))
+        })
+      return Service.of({
+        execute: (request) => retryStatusFailures(executeOnce(request), retries),
       })
-    return Service.of({
-      execute: (request) => retryStatusFailures(executeOnce(request)),
-    })
-  }),
-)
+    }),
+  )
+
+export const layer = makeLayer()
 
 export const fetchLayer = layer.pipe(Layer.provide(FetchHttpClient.layer))
 
