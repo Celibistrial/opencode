@@ -1085,13 +1085,34 @@ const layer = Layer.effect(
         let step = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
+        // Loop-local history cache. filterCompactedEffect reloads and JSON-decodes
+        // the entire session from SQLite every iteration, but between steps only
+        // the tail changes (the new assistant message + tool results). Keep the
+        // raw newest-first stream and prepend just the messages written since the
+        // last cursor; [...fresh, ...cachedRaw] is identical to a fresh stream(),
+        // so filterCompacted output is unchanged. The cache is loop-local so it
+        // dies with the turn (no cross-turn invalidation needed); it is cleared on
+        // the branches that reorder or rewrite history (subtask/compaction/overflow)
+        // so the next iteration rebuilds from scratch.
+        let cachedRaw: SessionV1.WithParts[] | undefined
+        let historyCursor: { id: MessageID; time: number } | undefined
+        const loadHistory = Effect.gen(function* () {
+          if (cachedRaw && historyCursor) {
+            const fresh = yield* MessageV2.since(sessionID, historyCursor)
+            cachedRaw = [...fresh, ...cachedRaw]
+          } else {
+            cachedRaw = yield* MessageV2.stream(sessionID)
+          }
+          const head = cachedRaw[0]
+          if (head) historyCursor = { id: head.info.id, time: head.info.time.created }
+          return MessageV2.filterCompacted(cachedRaw)
+        }).pipe(Effect.provideService(Database.Service, database))
+
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 
-          let msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
-            Effect.provideService(Database.Service, database),
-          )
+          let msgs = yield* loadHistory
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
@@ -1143,6 +1164,8 @@ const layer = Layer.effect(
 
           if (task?.type === "subtask") {
             yield* handleSubtask({ task, model, lastUser, sessionID, session, msgs })
+            // Subtask writes new messages the next pass must see; rebuild history.
+            cachedRaw = undefined
             continue
           }
 
@@ -1155,6 +1178,9 @@ const layer = Layer.effect(
               overflow: task.overflow,
             })
             if (result === "stop") break
+            // Compaction inserts a summary + reorders retained history; the cached
+            // raw stream no longer matches, so rebuild it from scratch next pass.
+            cachedRaw = undefined
             continue
           }
 
@@ -1164,6 +1190,7 @@ const layer = Layer.effect(
             (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
           ) {
             yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
+            cachedRaw = undefined
             continue
           }
 

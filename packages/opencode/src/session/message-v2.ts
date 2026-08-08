@@ -24,6 +24,7 @@ import { NotFoundError } from "@/storage/storage"
 import { and } from "drizzle-orm"
 import { desc } from "drizzle-orm"
 import { eq } from "drizzle-orm"
+import { gt } from "drizzle-orm"
 import { inArray } from "drizzle-orm"
 import { lt } from "drizzle-orm"
 import { or } from "drizzle-orm"
@@ -94,6 +95,9 @@ const part = (row: typeof PartTable.$inferSelect) =>
 
 const older = (row: Cursor) =>
   or(lt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)))
+
+const newer = (row: Cursor) =>
+  or(gt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), gt(MessageTable.id, row.id)))
 
 function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$inferSelect)[]) {
   const ids = rows.map((row) => row.id)
@@ -486,6 +490,25 @@ export function stream(sessionID: SessionID) {
       before = next.cursor
     }
     return result
+  })
+}
+
+// Fetch only messages strictly newer than `after` (same (time_created, id)
+// ordering as `page`), hydrated, newest-first — the exact suffix `stream` would
+// return above that cursor. Lets a caller that already holds an older prefix
+// append just the new tail instead of re-reading and re-decoding the whole
+// session. `[...since(after), ...prefix]` equals a fresh `stream()`.
+export function since(sessionID: SessionID, after: Cursor) {
+  return Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const rows = yield* db
+      .select()
+      .from(MessageTable)
+      .where(and(eq(MessageTable.session_id, sessionID), newer(after)))
+      .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+      .all()
+      .pipe(Effect.orDie)
+    return yield* hydrate(db, rows)
   })
 }
 

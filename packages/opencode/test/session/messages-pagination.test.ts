@@ -327,6 +327,31 @@ describe("MessageV2.stream", () => {
     ),
   )
 
+  // Prefix-cache invariant used by the agentic loop: caching an older prefix and
+  // prepending only the messages written since a cursor must equal a fresh full
+  // stream(). If since() misses or duplicates a message, the two diverge.
+  it.instance("since(cursor) prepended to a cached prefix equals a fresh stream", () =>
+    withSession(({ sessionID }) =>
+      Effect.gen(function* () {
+        // Explicit non-overlapping times so the two batches can't share a
+        // millisecond (which would make the cursor ambiguous in the test itself).
+        yield* fill(sessionID, 3, (i) => 1000 + i)
+        const prefix = yield* MessageV2.stream(sessionID)
+        const cursor = { id: prefix[0]!.info.id, time: prefix[0]!.info.time.created }
+
+        // Write more messages after taking the cursor.
+        yield* fill(sessionID, 4, (i) => 2000 + i)
+
+        const fresh = yield* MessageV2.since(sessionID, cursor)
+        const assembled = [...fresh, ...prefix]
+        const full = yield* MessageV2.stream(sessionID)
+        expect(assembled.map((m) => m.info.id)).toEqual(full.map((m) => m.info.id))
+        // since() returns only strictly-newer messages (no overlap with prefix).
+        expect(fresh.every((m) => m.info.id > cursor.id)).toBe(true)
+      }),
+    ),
+  )
+
   it.instance("yields single message", () =>
     withSession(({ sessionID }) =>
       Effect.gen(function* () {
