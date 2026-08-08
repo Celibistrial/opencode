@@ -751,6 +751,41 @@ describe("MessageV2.filterCompacted", () => {
     ),
   )
 
+  it.instance("filterCompactedEffect bounded stream equals full stream output", () =>
+    withSession(({ session, sessionID }) =>
+      Effect.gen(function* () {
+        // Pre-compaction history that the bounded stream must never fetch.
+        const u1 = yield* addUser(sessionID, "first")
+        yield* addAssistant(sessionID, u1, { finish: "end_turn" })
+        const u2 = yield* addUser(sessionID, "second")
+        yield* addAssistant(sessionID, u2, { finish: "end_turn" })
+
+        const c1 = yield* addUser(sessionID)
+        yield* addCompactionPart(sessionID, c1, u2)
+        const s1 = yield* addAssistant(sessionID, c1, { summary: true, finish: "end_turn" })
+        yield* session.updatePart({
+          id: PartID.ascending(),
+          sessionID,
+          messageID: s1,
+          type: "text",
+          text: "summary",
+        })
+
+        const u3 = yield* addUser(sessionID, "third")
+        yield* addAssistant(sessionID, u3, { finish: "end_turn" })
+
+        // The optimized (early-stop) path must produce exactly the same result as
+        // filtering the full unbounded stream. This catches any under-fetch: if the
+        // stop predicate halted before the retained tail, the tail would be missing.
+        const bounded = yield* MessageV2.filterCompactedEffect(sessionID)
+        const full = MessageV2.filterCompacted(yield* MessageV2.stream(sessionID))
+        expect(bounded.map((item) => item.info.id)).toEqual(full.map((item) => item.info.id))
+        // And pre-compaction messages are gone from the retained set.
+        expect(bounded.some((item) => item.info.id === u1)).toBe(false)
+      }),
+    ),
+  )
+
   it.instance("fork remaps compaction tail_start_id for filterCompacted", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service

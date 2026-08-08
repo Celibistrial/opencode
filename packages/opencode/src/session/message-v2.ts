@@ -466,7 +466,11 @@ export const page = Effect.fn("MessageV2.page")(function* (input: {
   }
 })
 
-export function stream(sessionID: SessionID) {
+// `stopAt`, when supplied, is called on each message as it is appended (newest
+// first). Returning true keeps that message and stops paging immediately, so
+// older pages are never fetched or JSON-decoded. Default (undefined) pages the
+// whole session as before — every existing caller and test is unaffected.
+export function stream(sessionID: SessionID, stopAt?: (item: WithParts) => boolean) {
   const size = 50
   return Effect.gen(function* () {
     const result = [] as WithParts[]
@@ -478,15 +482,46 @@ export function stream(sessionID: SessionID) {
         ),
       )
       if (next.items.length === 0) break
+      let stopped = false
       for (let i = next.items.length - 1; i >= 0; i--) {
         const item = next.items[i]
-        if (item) result.push(item)
+        if (!item) continue
+        result.push(item)
+        if (stopAt?.(item)) {
+          stopped = true
+          break
+        }
       }
+      if (stopped) break
       if (!next.more || !next.cursor) break
       before = next.cursor
     }
     return result
   })
+}
+
+// Mirrors the boundary walk at the head of `filterCompacted` (the pre-reverse
+// loop below): scanning newest-first, find the most recent completed compaction
+// and its retained `tail_start_id`, then signal stop once that message is
+// reached. Everything older is discarded by `filterCompacted` anyway, so paging
+// past it only wastes DB reads + part decoding. Stateful across pages: keep one
+// instance per `stream` call.
+const compactionBoundaryStop = () => {
+  const completed = new Set<string>()
+  let retain: MessageID | undefined
+  return (msg: WithParts): boolean => {
+    if (retain) return msg.info.id === retain
+    if (msg.info.role === "user" && completed.has(msg.info.id)) {
+      const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
+      if (!part) return false
+      if (!part.tail_start_id) return true
+      retain = part.tail_start_id
+      return msg.info.id === retain
+    }
+    if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
+      completed.add(msg.info.parentID)
+    return false
+  }
 }
 
 export function parts(messageID: MessageID) {
@@ -572,7 +607,7 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
 }
 
 export const filterCompactedEffect = Effect.fnUntraced(function* (sessionID: SessionID) {
-  return filterCompacted(yield* stream(sessionID))
+  return filterCompacted(yield* stream(sessionID, compactionBoundaryStop()))
 })
 
 // filterCompacted reorders messages for model consumption
