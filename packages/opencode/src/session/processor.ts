@@ -72,9 +72,23 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
+  // Per-part streaming buffers keyed by partID. Text and reasoning deltas arrive
+  // one per token; each `updatePartDelta` publishes an event that fans out over
+  // the event bus to every SSE/RPC subscriber, so publishing per token is a
+  // large share of streaming CPU. Coalesce a short window into one publish. The
+  // final `updatePart` on text-end / reasoning-end still carries the exact full
+  // text, so coalescing only changes the cadence of the incremental updates.
+  deltaBuf: Record<string, { buf: string; last: number }>
 }
 
 type StreamEvent = LLMEvent
+
+// Flush a part's buffered delta once it reaches this many chars or this many ms
+// since its last flush, whichever comes first. The first delta of a part always
+// flushes immediately (last starts at 0), so streaming still starts instantly.
+// OPENCODE_STREAM_COALESCE_MS=0 flushes every delta (disables coalescing).
+const STREAM_COALESCE_MS = Math.max(0, Math.min(500, Number(process.env["OPENCODE_STREAM_COALESCE_MS"]) || 90))
+const STREAM_COALESCE_CHARS = 80
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionProcessor") {}
 
@@ -111,6 +125,7 @@ const layer = Layer.effect(
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        deltaBuf: {},
       }
       let aborted = false
 
@@ -204,8 +219,45 @@ const layer = Layer.effect(
         return true
       })
 
+      // Buffer a text/reasoning delta and publish the accumulated buffer only when
+      // it crosses the size/time threshold, collapsing many per-token publishes
+      // into few.
+      type DeltaPart = SessionV1.TextPart | SessionV1.ReasoningPart
+      const pushDelta = Effect.fn("SessionProcessor.pushDelta")(function* (part: DeltaPart, text: string) {
+        const state = (ctx.deltaBuf[part.id] ??= { buf: "", last: 0 })
+        state.buf += text
+        const now = Date.now()
+        if (state.buf.length < STREAM_COALESCE_CHARS && now - state.last < STREAM_COALESCE_MS) return
+        const delta = state.buf
+        state.buf = ""
+        state.last = now
+        yield* session.updatePartDelta({
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          partID: part.id,
+          field: "text",
+          delta,
+        })
+      })
+      // Publish any remaining buffered delta and drop the buffer. Called before the
+      // authoritative `updatePart` at part end so no trailing tokens are stranded.
+      const flushDelta = Effect.fn("SessionProcessor.flushDelta")(function* (part: DeltaPart) {
+        const state = ctx.deltaBuf[part.id]
+        if (!state) return
+        delete ctx.deltaBuf[part.id]
+        if (!state.buf) return
+        yield* session.updatePartDelta({
+          sessionID: part.sessionID,
+          messageID: part.messageID,
+          partID: part.id,
+          field: "text",
+          delta: state.buf,
+        })
+      })
+
       const finishReasoning = Effect.fn("SessionProcessor.finishReasoning")(function* (reasoningID: string) {
         if (!(reasoningID in ctx.reasoningMap)) return
+        yield* flushDelta(ctx.reasoningMap[reasoningID])
         // oxlint-disable-next-line no-self-assign -- reactivity trigger
         ctx.reasoningMap[reasoningID].text = ctx.reasoningMap[reasoningID].text
         ctx.reasoningMap[reasoningID].time = { ...ctx.reasoningMap[reasoningID].time, end: Date.now() }
@@ -296,13 +348,7 @@ const layer = Layer.effect(
             if (!(value.id in ctx.reasoningMap)) return
             ctx.reasoningMap[value.id].text += value.text
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
-            yield* session.updatePartDelta({
-              sessionID: ctx.reasoningMap[value.id].sessionID,
-              messageID: ctx.reasoningMap[value.id].messageID,
-              partID: ctx.reasoningMap[value.id].id,
-              field: "text",
-              delta: value.text,
-            })
+            yield* pushDelta(ctx.reasoningMap[value.id], value.text)
             return
 
           case "reasoning-end":
@@ -500,17 +546,12 @@ const layer = Layer.effect(
             if (!ctx.currentText) return
             ctx.currentText.text += value.text
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
-            yield* session.updatePartDelta({
-              sessionID: ctx.currentText.sessionID,
-              messageID: ctx.currentText.messageID,
-              partID: ctx.currentText.id,
-              field: "text",
-              delta: value.text,
-            })
+            yield* pushDelta(ctx.currentText, value.text)
             return
 
           case "text-end":
             if (!ctx.currentText) return
+            yield* flushDelta(ctx.currentText)
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
             ctx.currentText.text = ctx.currentText.text
             ctx.currentText.text = (yield* plugin.trigger(
